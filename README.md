@@ -49,7 +49,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 首次定位会锁定一个候选地址并提示「请在游戏内移动角色以完成验证」，走动 3~5 步即完全锁定。
 适配细节、实测数据与已知限制见 [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md)。
 
-开箱即用的 Windows 包：[**v3.2.2-savagewind.1**](https://github.com/yuren238/BOTWmap/releases/tag/v3.2.2-savagewind.1)
+开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.2`）
 （`Xnavi.exe` GUI + `xnavi-core.exe` 定位核心，解压后两个 exe 放同一目录，平台下拉选 Savage Wind）。
 
 ## 核心功能

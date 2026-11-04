@@ -108,7 +108,7 @@ func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHi
 	if n > topN {
 		n = topN
 	}
-	if n < 2 {
+	if n < 1 {
 		return groups, 0, 0
 	}
 
@@ -215,6 +215,7 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 	var manualTarget [3]float32
 	hasManual := false
 	lastScanAt := time.Time{}
+	scanCooldown := time.Second
 	holdLogged := false
 	lockSince := time.Time{}
 	lastUnverifiedHint := time.Time{}
@@ -232,7 +233,13 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 		goUnlocked(reason)
 	}
 
+	// lastScanStatic 记录上一次扫描"窗口内所有候选都静止"（世界未更新 / 窗口偏离真身）。
+	// 这种情况绝不能锁定：锁到的必然是静态副本，之后怎么走都不会跟随。
+	var lastScanStatic bool
+	var lastStaticHint time.Time
+
 	scanNear := func(center [3]float32, radius float32) bool {
+		lastScanStatic = false
 		h := t.p.Handle()
 		blks := t.p.Blocks(256.0)
 		if len(blks) == 0 {
@@ -324,6 +331,14 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 		// 但它的字节永不变化；真身 Transform 每帧都在重写。
 		groups, liveN, liveBytes := t.preferLiveGroups(h, groups)
 
+		// 门禁④：窗口内一个候选都不跳 -> 绝不锁定。
+		// 静止意味着世界没在更新（菜单/加载），或存档锚点太旧、真身早已走出窗口，
+		// 此时窗口里只剩静态快照，锁上去必然坐标冻结。返回 false 让外层放大窗口重扫。
+		if liveN == 0 {
+			lastScanStatic = true
+			return false
+		}
+
 		best := groups[0]
 		lockedAddr = best.Addr
 		cur = best.P
@@ -387,7 +402,7 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 
 			// 2. UNLOCKED：guest 内存动态扫描（带 Run>=2 门禁）
 			if lockedAddr == 0 {
-				if time.Since(lastScanAt) < 1*time.Second {
+				if time.Since(lastScanAt) < scanCooldown {
 					continue
 				}
 				lastScanAt = time.Now()
@@ -398,10 +413,12 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 				anchors := currentGame.SaveAnchors(t.p)
 				var latestSaveAnchor *SaveAnchor
 				saveIsFresh := false
+				saveAge := time.Duration(0)
 				if len(anchors) > 0 {
 					latestSaveAnchor = anchors[0]
 					if fi, err := os.Stat(latestSaveAnchor.Path); err == nil {
-						if time.Since(fi.ModTime()) <= 120*time.Second {
+						saveAge = time.Since(fi.ModTime())
+						if saveAge <= 120*time.Second {
 							saveIsFresh = true
 						}
 					}
@@ -420,8 +437,16 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 						t.P("  [scan] Ryujinx 发现新鲜存档 (<=120s)，扫描 120m 锚点窗口 (%.1f, %.1f, %.1f)... / Fresh save detected, scanning window 120m...\n",
 							scanCenter[0], scanCenter[1], scanCenter[2])
 					} else {
-						t.P("  [scan] Ryujinx 扫描存档锚点 120m 窗口 (%.1f, %.1f, %.1f)... / Scanning save anchor window 120m...\n",
-							scanCenter[0], scanCenter[1], scanCenter[2])
+						// 存档越旧，玩家离锚点越远：直接放宽到 400m，
+						// 免得先在 120m 里锁到一堆上一次的静态残留（锁上去就是坐标冻结）。
+						if saveAge > 5*time.Minute {
+							radius = 400.0
+							t.P("  [scan] 存档已 %.0f 分钟未更新，放宽到 400m 窗口 (%.1f, %.1f, %.1f)... / Stale save (%.0fm), scanning wider 400m window...\n",
+								saveAge.Minutes(), scanCenter[0], scanCenter[1], scanCenter[2], saveAge.Minutes())
+						} else {
+							t.P("  [scan] Ryujinx 扫描存档锚点 120m 窗口 (%.1f, %.1f, %.1f)... / Scanning save anchor window 120m...\n",
+								scanCenter[0], scanCenter[1], scanCenter[2])
+						}
 					}
 				default:
 					state.mu.Lock()
@@ -440,13 +465,46 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 				}
 				if found {
 					hasManual = false
+					scanCooldown = time.Second
+				} else if lastScanStatic {
+					// 全部窗口都是静止数据：世界此刻没有更新（菜单/加载/暂停），
+					// 或存档锚点太旧且真身已走远。不锁定，退避后重试。
+					scanCooldown = 6 * time.Second
+					if time.Since(lastStaticHint) > 10*time.Second {
+						t.P("  [scan] 窗口内候选全部静止 -> 暂不锁定（世界未更新或存档锚点过旧），6 秒后重试 / All candidates static, skip lock and retry in 6s\n")
+						lastStaticHint = time.Now()
+					}
+					state.mu.Lock()
+					state.source = "waiting for live world"
+					state.mu.Unlock()
 				} else {
+					scanCooldown = time.Second
 					t.P("  [scan] Ryujinx 扫描未发现活动玩家 (等待进入 3D 游戏世界)... / No live player found (waiting for 3D world)...\n")
 				}
 				continue
 			}
 
 			// 3. LOCKED：死守 lockedAddr，过图黑屏平滑保持，落地直接接管，绝不主动掉锁
+			// 例外：未获走动确认、且锁定记录已完全停止写入（static）时，说明锁到的是静态副本，
+			// 必须掉锁重扫，否则红点会永久冻结。
+			if !verified && !lockSince.IsZero() && time.Since(lockSince) > 45*time.Second {
+				a := readMem(h, lockedAddr-0x80, 256)
+				time.Sleep(120 * time.Millisecond)
+				b := readMem(h, lockedAddr-0x80, 256)
+				frozen := len(a) == 256 && len(b) == 256
+				for i := 0; frozen && i < len(a); i++ {
+					if a[i] != b[i] {
+						frozen = false
+					}
+				}
+				if frozen {
+					t.P("  [relock] 锁定记录 45 秒无走动且完全不再写入 -> 判定为静态副本，重新扫描 / Stale lock (frozen, unverified), rescanning\n")
+					reset("relock-frozen")
+					continue
+				}
+				lockSince = time.Now()
+			}
+
 			d, ok := readRyujinxActor(h, lockedAddr)
 			if !ok {
 				for i := 0; i < 3; i++ {

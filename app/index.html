@@ -95,6 +95,12 @@
           <button id="btnSaveEdit" type="button" class="su-edit" aria-label="修改本地存档" title="修改本地存档" data-i18n-aria="save.editBtn" data-i18n-title="save.editBtn" onclick="window.open('save-edit/editor.html?v=11','_blank')">🛠</button>
           <span class="su-edit-tip" id="suEditTip" data-i18n="save.editBtn">修改本地存档</span>
         </span>
+        <!-- 2026-11-04：清空本地探索度入口。JS 早就在找 btnClearDone，但 DOM 一直缺失，
+             导致换档后残留的宝箱/装备/任务缓存没有可点的清理入口（只能开控制台）。 -->
+        <span class="su-edit-wrap">
+          <button id="btnClearDone" type="button" class="su-edit" aria-label="清空本地探索度" title="清空本地探索度记录（切换存档后用于清掉上一档残留）">🧹</button>
+          <span class="su-edit-tip" id="suClearTip">清空本地探索度</span>
+        </span>
         <span class="su-help" id="suHelp" tabindex="0" role="button" aria-label="存档在哪里" data-i18n-aria="save.help">?</span>
       </div>
       <div class="su-tip hidden" id="suTip">

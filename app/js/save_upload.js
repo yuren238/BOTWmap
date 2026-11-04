@@ -396,6 +396,29 @@ const SAVE_UPLOAD = (() => {
       return;
     }
 
+    /* 2026-11-04 修复②：换档时自动清空上一档的存档快照缓存。
+       「空集也注入」只解决「本次注入跑到了」的情况；若页面还在跑旧版 JS（浏览器缓存命中）
+       或 /save 一时拉不到，上一档的宝箱/装备/任务缓存会继续显示。
+       这里用 PlayTime 当换档指纹：正常游玩只增不减，出现明显回退（>30s）即说明读了别的档或新开档，
+       先按整集替换语义把三个存档快照键清掉，再让后面的注入写入新档内容。 */
+    try {
+      const K_FP = 'botwmap.savePlaytime.v1';
+      const prevPt = Number(localStorage.getItem(K_FP) || 0);
+      if (prevPt > 0 && playtime + 30 < prevPt) {
+        localStorage.removeItem('botwmap.chestSaveDone.v1');
+        localStorage.removeItem('botwmap.equipSaveDone.v1');
+        localStorage.removeItem('botwmap.questSave.v1');
+        if (window.ChestSync && window.ChestSync.loadSave) window.ChestSync.loadSave([]);
+        if (window.EquipPanel && window.EquipPanel.EquipDone && window.EquipPanel.EquipDone.loadSave) {
+          window.EquipPanel.EquipDone.loadSave([]);
+        }
+        window.__saveCounts = null;
+        if (UI && UI.toast) UI.toast('检测到切换存档（游玩时长 '
+          + Math.floor(prevPt / 60) + ' → ' + Math.floor(playtime / 60) + ' 分钟），已清空上一档的探索缓存');
+      }
+      localStorage.setItem(K_FP, String(playtime));
+    } catch (eFP) { /* 隐私模式下 localStorage 不可写时静默 */ }
+
     /* P3：世界档位计算（官方缩放算法）与徽标展示 */
     let tierInfo = { points: 0, tier: 0, worldTier: 0, level: 1, chainTier: {} };
     if (window.EnemyTiers && window.EnemyTiers.calcTier) {

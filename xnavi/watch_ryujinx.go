@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -131,18 +132,22 @@ func (t *RyujinxTracker) anyWorldTicking(h uintptr, cands []candSlot) bool {
 // 区别只有一处：静态快照整段字节永远不变；真身每帧都在重写（实测 0.15s 内
 // 静态快照 0/1024 字节变化，真身 400+/1024 字节变化）。
 //
-// 返回重排后的候选、活跃候选数量、以及被选中候选的字节变化量（诊断用）。
+// 2026-11-04 修正（大师模式新档"全静止"）：候选排序是 Run 降序，静态快照的 Run
+// 偏偏最大（实测 33），真身只有 2~6 —— 只采前 64 名时名额全被静态副本占满，
+// 于是每轮都判"窗口内候选全部静止"。改为按 Run 分层采样（每层各取一份），
+// 第一轮全静止时再用窄窗口对剩余候选复采一轮兜底。
+//
+// 返回重排后的候选、活跃候选数量、以及采样到的最大字节变化量（诊断用）。
 func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHit, int, int) {
-	const topN = 64
+	const maxSample = 384    // 第一轮采样上限（按 Run 分层，避免单一层吃满）
+	const perRun = 64        // 每个 Run 层的采样上限
+	const fallbackMax = 1536 // 第二轮兜底采样上限
 	const span = 0x400
+	const fallbackSpan = 0x100
 	const warm = 150 * time.Millisecond
 	const liveThreshold = 8
 
-	n := len(groups)
-	if n > topN {
-		n = topN
-	}
-	if n < 1 {
+	if len(groups) == 0 {
 		return groups, 0, 0
 	}
 
@@ -153,67 +158,135 @@ func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHi
 		return a
 	}
 
-	first := make([][]byte, n)
-	for i := 0; i < n; i++ {
-		first[i] = readMem(h, off(groups[i].Addr), span)
+	scores := make([]int, len(groups))
+	for i := range scores {
+		scores[i] = -1 // -1 = 未采样
 	}
-	time.Sleep(warm)
 
-	score := make([]int, n)
-	liveN := 0
-	for i := 0; i < n; i++ {
-		a := first[i]
-		if len(a) == 0 {
-			continue
+	// sample 对给定下标各读两次，返回（跳动组数, 最大字节变化）。
+	sample := func(idxs []int, sp int) (int, int) {
+		first := make([][]byte, len(idxs))
+		for k, gi := range idxs {
+			first[k] = readMem(h, off(groups[gi].Addr), sp)
 		}
-		b := readMem(h, off(groups[i].Addr), span)
-		if len(b) != len(a) {
-			continue
-		}
-		c := 0
-		for j := range a {
-			if a[j] != b[j] {
-				c++
+		time.Sleep(warm)
+		live, bestCh := 0, 0
+		for k, gi := range idxs {
+			a := first[k]
+			if len(a) == 0 {
+				continue
+			}
+			b := readMem(h, off(groups[gi].Addr), sp)
+			if len(b) != len(a) {
+				continue
+			}
+			c := 0
+			for j := range a {
+				if a[j] != b[j] {
+					c++
+				}
+			}
+			scores[gi] = c
+			if c >= liveThreshold {
+				live++
+			}
+			if c > bestCh {
+				bestCh = c
 			}
 		}
-		score[i] = c
-		if c >= liveThreshold {
-			liveN++
+		return live, bestCh
+	}
+
+	// 第一轮：按 Run 分层采样。不能只取前 N 名 —— 静态快照的 Run 往往最大
+	// （实测 Run=33），真身 Run 只有 2~6，按 Run 降序会把采样名额全给静态副本。
+	pick := livenessSample(groups, maxSample, perRun)
+	liveN, best := sample(pick, span)
+
+	// 第一轮全静止：真身可能排在采样名额之外，用窄窗口把剩余候选再采一遍。
+	if liveN == 0 && len(groups) > len(pick) {
+		sampled := make(map[int]bool, len(pick))
+		for _, gi := range pick {
+			sampled[gi] = true
+		}
+		rest := make([]int, 0, len(groups)-len(pick))
+		for i := range groups {
+			if !sampled[i] {
+				rest = append(rest, i)
+			}
+		}
+		if len(rest) > fallbackMax {
+			rest = rest[:fallbackMax]
+		}
+		if l2, b2 := sample(rest, fallbackSpan); l2 > 0 {
+			liveN += l2
+			if b2 > best {
+				best = b2
+			}
 		}
 	}
 
-	// 一个都没跳动（可能整段都没加载好）：保持原排序，交给上层的走动仲裁处理。
+	// 两轮都没跳动（可能整段都没加载好）：保持原排序，交给上层的走动仲裁处理。
 	if liveN == 0 {
-		t.P("  [verify] 候选共 %d 组，前 %d 组 0.15s 内均无字节变化（静态数据）/ %d groups, none ticking in 0.15s\n",
-			len(groups), n, len(groups))
-		for i := 0; i < n && i < 6; i++ {
+		t.P("  [verify] 候选共 %d 组，采样 %d 组两轮均无字节变化（静态数据）/ %d groups, none ticking in 2 passes\n",
+			len(groups), len(pick), len(groups))
+		for i := 0; i < len(pick) && i < 6; i++ {
+			g := groups[pick[i]]
 			t.P("  [verify] 候选#%d 0x%X (%.1f, %.1f, %.1f) run=%d 变化 %d 字节 / candidate liveness\n",
-				i+1, groups[i].Addr, groups[i].P[0], groups[i].P[1], groups[i].P[2], groups[i].Run, score[i])
+				i+1, g.Addr, g.P[0], g.P[1], g.P[2], g.Run, scores[pick[i]])
 		}
 		return groups, 0, 0
 	}
 
-	t.P("  [verify] 活跃度校验：%d/%d 组在跳动，已把活对象排到前面 / liveness: %d of %d groups ticking\n", liveN, n, liveN, n)
+	t.P("  [verify] 活跃度校验：采样 %d/%d 组，%d 组在跳动，已把活对象排到前面 / liveness: %d live of %d sampled\n",
+		len(pick), len(groups), liveN, liveN, len(pick))
+
+	type scored struct{ gi, sc int }
+	var liveIdx []scored
+	for i, s := range scores {
+		if s >= liveThreshold {
+			liveIdx = append(liveIdx, scored{i, s})
+		}
+	}
+	sort.SliceStable(liveIdx, func(a, b int) bool { return liveIdx[a].sc > liveIdx[b].sc })
 
 	out := make([]EdenHit, 0, len(groups))
-	best := 0
-	for i := 0; i < n; i++ {
-		if score[i] >= liveThreshold {
-			out = append(out, groups[i])
-			if score[i] > best {
-				best = score[i]
-			}
-		}
+	used := make([]bool, len(groups))
+	for _, s := range liveIdx {
+		out = append(out, groups[s.gi])
+		used[s.gi] = true
 	}
-	for i := 0; i < n; i++ {
-		if score[i] < liveThreshold {
+	for i := range groups {
+		if !used[i] {
 			out = append(out, groups[i])
 		}
-	}
-	for i := n; i < len(groups); i++ {
-		out = append(out, groups[i])
 	}
 	return out, liveN, best
+}
+
+// livenessSample 选活跃度采样下标：按 Run 分层，每层最多 perRun 个，总量 maxSample。
+// 不能让 Run 最大的静态快照把名额吃光（Savage Wind 实测：静态副本 Run=33，
+// 真身 Run 只有 2~6，前 64 名清一色静态）。
+func livenessSample(groups []EdenHit, maxSample, perRun int) []int {
+	if len(groups) <= maxSample {
+		out := make([]int, len(groups))
+		for i := range out {
+			out[i] = i
+		}
+		return out
+	}
+	per := map[int]int{}
+	out := make([]int, 0, maxSample)
+	for i, g := range groups {
+		if per[g.Run] >= perRun {
+			continue
+		}
+		per[g.Run]++
+		out = append(out, i)
+		if len(out) >= maxSample {
+			break
+		}
+	}
+	return out
 }
 
 // readRyujinxActor 直接按小端读取 12 字节并经 WorldCoordOK 校验。

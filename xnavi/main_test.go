@@ -241,6 +241,55 @@ func makeSaveWith(t *testing.T, pos [3]float32, playtime uint32, extra map[uint3
 	return buf
 }
 
+// TestSaveAnchorsPrefersNewestPlayedSlot 锁住 2026-11-04「大师模式新档锁不上」的修复：
+// 新开档的 shrine 数为 0，但 mtime 最新 + Playtime>0，它才是正在玩的档；
+// 一小时前的普通档有 4 个神庙，不能因为"进度更全"就抢走锚点。
+func TestSaveAnchorsPrefersNewestPlayedSlot(t *testing.T) {
+	hashes := shrineDoneHashes()
+	if len(hashes) == 0 {
+		t.Fatal("embedded progress table missing shrine hashes")
+	}
+	root := t.TempDir()
+	write := func(slot string, data []byte, mod time.Time) {
+		dir := filepath.Join(root, botwTitleID, "0000000000000008", slot)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, "game_data.sav")
+		if err := os.WriteFile(p, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	// slot 6：大师模式新档 —— 无神庙、刚写过（正在玩）
+	write("6", makeSaveWith(t, [3]float32{-1102.2, 235.5, 1880.0}, 796, nil), now)
+	// slot 4：普通档 —— 4 个神庙、一小时前写的（不是当前档）
+	write("4", makeSaveWith(t, [3]float32{-783.4, 189.5, 1803.2}, 15273,
+		map[uint32]uint32{hashes[0]: 1, hashes[1]: 1, hashes[2]: 1, hashes[3]: 1}),
+		now.Add(-time.Hour))
+
+	setEdenSaveDirOverride(root)
+	defer setEdenSaveDirOverride("")
+	got := currentGame.SaveAnchors(&edenPlatform{})
+	if len(got) == 0 {
+		t.Fatal("expected an anchor")
+	}
+	if math.Abs(float64(got[0].Pos[0]+1102.2)) > 0.01 {
+		t.Fatalf("should anchor on the newest played slot, got pos=%v playtime=%d",
+			got[0].Pos, got[0].Playtime)
+	}
+	if got[0].Playtime != 796 {
+		t.Fatalf("playtime mismatch: %d", got[0].Playtime)
+	}
+	// 有进度的旧档保留为备用锚，供扫描失败时回退
+	if len(got) < 2 || math.Abs(float64(got[1].Pos[0]+783.4)) > 0.01 {
+		t.Fatalf("expected old progressed slot as fallback anchor, got %d anchors", len(got))
+	}
+}
+
 func TestSaveAnchorsSkipsEmptySlot(t *testing.T) {
 	hashes := shrineDoneHashes()
 	if len(hashes) == 0 {

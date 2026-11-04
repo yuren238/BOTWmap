@@ -303,12 +303,14 @@ func (g *gameBotw) ShrineReturn() (time.Duration, float32) {
 // EdenSaveKnown 多次调用，同一个空档只报一次，避免日志刷屏。
 var anchorSkipLogged sync.Map
 
-// logAnchorSkip 报告被排除的空档/新档（#25 判读入口：一眼看出锚点为什么是废的）。
+// logAnchorSkip 报告被排除的空档（#25 判读入口：一眼看出锚点为什么是废的）。
+// 只有 Playtime==0 的真空档才会走到这里；「shrines=0 的新开档」不再算空档
+// （大师模式新档就是这样，误排除会让锚点落到一小时前的旧档）。
 func logAnchorSkip(path string, playtime uint32, dones int) {
 	if _, seen := anchorSkipLogged.LoadOrStore(path, true); seen {
 		return
 	}
-	fmt.Printf("  [anchor] skip empty/new save slot: %s (playtime=%ds, shrines=%d)\n",
+	fmt.Printf("  [anchor] skip empty save slot: %s (playtime=%ds, shrines=%d)\n",
 		path, playtime, dones)
 }
 
@@ -369,9 +371,15 @@ func (g *gameBotw) SaveAnchors(p Platform) []*SaveAnchor {
 		// 初始位置（实测锚点 (-1026.5, 252.3, 1803.2)，玩家在 5000 米外的阿卡莱），
 		// 拿它当扫描中心会让整轮定位全废（±120m 只命中 391 条 → 全堆兜底锁伪坐标）。
 		// 选档策略（按 mtime 降序遍历，命中即停，只解析到答案为止）：
-		//   ① 最新档里 Playtime>0 且神庙完成数>0 的第一个 —— 正常在玩的档；
-		//   ② 兜底：最新档里 Playtime>0 的第一个（刚出初始台地、还没通关神庙）；
+		//   ① 主锚：mtime 最新且 Playtime>0 的档 —— **正在玩的档一定最近写入**；
+		//   ② 备用锚：更旧的、已有神庙进度的档（主锚是新开档时留给上层回退）；
 		//   ③ 极端兜底：全部是空档 → 沿用旧行为（按 mtime 最新），不降低老下限。
+		//
+		// 2026-11-04 修正（大师模式新档锁不上）：旧规则让「shrines>0」优先于「mtime 最新」，
+		// 于是刚开的大师模式档（playtime 13 分钟、shrines 0）永远输给一小时前的普通档。
+		// 实测槽 6/7 是正在玩的档 (-1102,235,1880)/(-1050,249,1821)，锚点却取槽 4
+		// (-783,189,1803)，偏离 274m —— 400m 窗口里全是上一次会话的静态残留，
+		// 每轮都判「全静止不锁定」。神庙进度只能说明"玩得久"，不能说明"现在在玩"。
 		type saveCand struct {
 			path string
 			mod  time.Time
@@ -383,34 +391,35 @@ func (g *gameBotw) SaveAnchors(p Platform) []*SaveAnchor {
 			}
 		}
 		sort.Slice(cands, func(i, j int) bool { return cands[i].mod.After(cands[j].mod) })
-		var strong, played *SaveAnchor
+		var primary, strong *SaveAnchor
 		for _, c := range cands {
 			entries, a := parseGameData(c.path)
 			if a == nil {
 				continue
 			}
 			dones := shrineDoneCount(entries)
-			if a.Playtime == 0 || dones == 0 {
-				logAnchorSkip(c.path, a.Playtime, dones)
-			}
 			if a.Playtime == 0 {
+				logAnchorSkip(c.path, a.Playtime, dones)
 				continue
 			}
-			if played == nil {
-				played = a
+			if primary == nil {
+				primary = a
+				if dones > 0 { // 最新档本身就有进度，不需要备用锚
+					break
+				}
+				continue
 			}
-			if dones > 0 {
+			if dones > 0 { // 主锚是新开档：记下一个有进度的旧档作备用
 				strong = a
 				break
 			}
 		}
-		if strong != nil {
-			logSaveFreshness(strong)
-			return []*SaveAnchor{strong}
-		}
-		if played != nil {
-			logSaveFreshness(played)
-			return []*SaveAnchor{played}
+		if primary != nil {
+			logSaveFreshness(primary)
+			if strong != nil {
+				return []*SaveAnchor{primary, strong}
+			}
+			return []*SaveAnchor{primary}
 		}
 		for _, c := range cands {
 			if _, a := parseGameData(c.path); a != nil {

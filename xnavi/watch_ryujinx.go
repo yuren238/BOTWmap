@@ -138,14 +138,13 @@ func (t *RyujinxTracker) anyWorldTicking(h uintptr, cands []candSlot) bool {
 // 第一轮全静止时再用窄窗口对剩余候选复采一轮兜底。
 //
 // 返回重排后的候选、活跃候选数量、以及采样到的最大字节变化量（诊断用）。
-func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHit, int, int) {
+func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit, cx, cy, cz float64) ([]EdenHit, int, int) {
 	const maxSample = 384    // 第一轮采样上限（按 Run 分层，避免单一层吃满）
 	const perRun = 64        // 每个 Run 层的采样上限
 	const fallbackMax = 1536 // 第二轮兜底采样上限
 	const span = 0x400
 	const fallbackSpan = 0x100
 	const warm = 150 * time.Millisecond
-	const liveThreshold = 8
 
 	if len(groups) == 0 {
 		return groups, 0, 0
@@ -158,9 +157,11 @@ func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHi
 		return a
 	}
 
-	scores := make([]int, len(groups))
+	scores := make([]int, len(groups))    // 1KB 窗口内的字节变化数
+	posScores := make([]int, len(groups)) // 坐标自身（12 字节）的变化数
 	for i := range scores {
 		scores[i] = -1 // -1 = 未采样
+		posScores[i] = -1
 	}
 
 	// sample 对给定下标各读两次，返回（跳动组数, 最大字节变化）。
@@ -186,8 +187,21 @@ func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHi
 					c++
 				}
 			}
+			// 坐标自身（窗口偏移 0x80 起的 12 字节）是否在变 —— 判「实体是否活着」的关键。
+			// 只看窗口字节变化会误判：静态快照自己的坐标恒定，但周围 1KB 里有别的对象在动，
+			// 照样能蹭到很高的分数。实测因此锁到过偏 536 米的副本（坐标 4 分钟零变化）。
+			pc := 0
+			const po = 0x80
+			if len(a) >= po+12 {
+				for j := po; j < po+12; j++ {
+					if a[j] != b[j] {
+						pc++
+					}
+				}
+			}
 			scores[gi] = c
-			if c >= liveThreshold {
+			posScores[gi] = pc
+			if pc >= 1 {
 				live++
 			}
 			if c > bestCh {
@@ -227,38 +241,50 @@ func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHi
 
 	// 两轮都没跳动（可能整段都没加载好）：保持原排序，交给上层的走动仲裁处理。
 	if liveN == 0 {
-		t.P("  [verify] 候选共 %d 组，采样 %d 组两轮均无字节变化（静态数据）/ %d groups, none ticking in 2 passes\n",
+		t.P("  [verify] 候选共 %d 组，采样 %d 组坐标均未变化（静态数据）/ %d groups, no coordinate moved in 2 passes\n",
 			len(groups), len(pick), len(groups))
 		for i := 0; i < len(pick) && i < 6; i++ {
 			g := groups[pick[i]]
-			t.P("  [verify] 候选#%d 0x%X (%.1f, %.1f, %.1f) run=%d 变化 %d 字节 / candidate liveness\n",
-				i+1, g.Addr, g.P[0], g.P[1], g.P[2], g.Run, scores[pick[i]])
+			t.P("  [verify] 候选#%d 0x%X (%.1f, %.1f, %.1f) run=%d 坐标变化 %d 字节 / 窗口 %d 字节 / candidate liveness\n",
+				i+1, g.Addr, g.P[0], g.P[1], g.P[2], g.Run, posScores[pick[i]], scores[pick[i]])
 		}
 		return groups, 0, 0
 	}
 
-	t.P("  [verify] 活跃度校验：采样 %d/%d 组，%d 组在跳动，已把活对象排到前面 / liveness: %d live of %d sampled\n",
+	t.P("  [verify] 活跃度校验：采样 %d/%d 组，%d 组坐标在变化，已把活对象排到前面 / liveness: %d live of %d sampled\n",
 		len(pick), len(groups), liveN, liveN, len(pick))
 
-	type scored struct{ gi, sc int }
-	var liveIdx []scored
-	for i, s := range scores {
-		if s >= liveThreshold {
-			liveIdx = append(liveIdx, scored{i, s})
+	// 排序：坐标自己在动的优先（这些才是活实体）。
+	// 同类里按「距存档锚点」由近到远 —— 玩家是从存档点走出去的，通常是离锚点最近的活物；
+	// 不能按变化字节排：动物 / 怪物 / 特效跳得比玩家猛，实测会把玩家挤到后面，
+	// 锁到 138m 外的 NPC。
+	dist := func(g EdenHit) float64 {
+		dx := float64(g.P[0]) - cx
+		dy := float64(g.P[1]) - cy
+		dz := float64(g.P[2]) - cz
+		return math.Sqrt(dx*dx + dy*dy + dz*dz)
+	}
+	liveIdx := make([]int, 0, len(groups))
+	deadIdx := make([]int, 0, len(groups))
+	for i, pc := range posScores {
+		if pc >= 1 {
+			liveIdx = append(liveIdx, i)
+		} else {
+			deadIdx = append(deadIdx, i)
 		}
 	}
-	sort.SliceStable(liveIdx, func(a, b int) bool { return liveIdx[a].sc > liveIdx[b].sc })
+	byDist := func(idx []int) {
+		sort.SliceStable(idx, func(a, b int) bool { return dist(groups[idx[a]]) < dist(groups[idx[b]]) })
+	}
+	byDist(liveIdx)
+	byDist(deadIdx)
 
 	out := make([]EdenHit, 0, len(groups))
-	used := make([]bool, len(groups))
-	for _, s := range liveIdx {
-		out = append(out, groups[s.gi])
-		used[s.gi] = true
+	for _, gi := range liveIdx {
+		out = append(out, groups[gi])
 	}
-	for i := range groups {
-		if !used[i] {
-			out = append(out, groups[i])
-		}
+	for _, gi := range deadIdx {
+		out = append(out, groups[gi])
 	}
 	return out, liveN, best
 }
@@ -436,7 +462,7 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 		// 门禁③：活对象优先。存档里保存的玩家位置在 guest RAM 中往往还有一份静态快照
 		// （Run 同样成立，且与本存档锚点几乎重合，因此会靠"距锚点最近"抢到第一名），
 		// 但它的字节永不变化；真身 Transform 每帧都在重写。
-		groups, liveN, liveBytes := t.preferLiveGroups(h, groups)
+		groups, liveN, liveBytes := t.preferLiveGroups(h, groups, float64(center[0]), float64(center[1]), float64(center[2]))
 
 		// 门禁④：窗口内一个候选都不跳 -> 绝不锁定。
 		// 静止意味着世界没在更新（菜单/加载），或存档锚点太旧、真身早已走出窗口，

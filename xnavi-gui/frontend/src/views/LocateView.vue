@@ -44,6 +44,7 @@
           <option value="cemu">{{ t('emu.cemu') }}</option>
           <option value="ryujinx">{{ t('emu.ryujinx') }}</option>
           <option value="eden">{{ t('emu.eden') }}</option>
+          <option value="savagewind">{{ t('emu.savagewind') }}</option>
         </select>
         <button @click="openMap" class="w-[124px] py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-medium border border-slate-700 flex items-center justify-center gap-1.5 transition">
           🧭 {{ t('buttons.openMap') }}
@@ -232,7 +233,7 @@ function closeWin() { rt.Quit() }
 
 const emuShortLabel = computed(() => {
   const e = cfg.emulator || 'auto'
-  return { auto: '自动探测', cemu: 'Cemu', ryujinx: 'Ryujinx', eden: 'Eden' }[e] || e
+  return { auto: '自动探测', cemu: 'Cemu', ryujinx: 'Ryujinx', eden: 'Eden', savagewind: 'Savage Wind' }[e] || e
 })
 
 const headerMapHost = 'botw.yalin.site'

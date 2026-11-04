@@ -21,12 +21,12 @@ export const pos = reactive({
 export const progressData = ref({})
 
 export const cfg = reactive({
-  cemuSaveDir: '', ryujinxSaveDir: '', edenSaveDir: '',
+  cemuSaveDir: '', ryujinxSaveDir: '', edenSaveDir: '', savagewindSaveDir: '',
   emulator: 'auto', game: 'auto', tls: false,
   autoOpenMap: true, autoDetectSave: true
 })
 
-export const envDetect = reactive({ cemu: false, ryujinx: false, eden: false })
+export const envDetect = reactive({ cemu: false, ryujinx: false, eden: false, savagewind: false })
 export const detectedGame = ref('')
 
 export const syncText = computed(() => {
@@ -123,6 +123,7 @@ export async function saveSettings() {
     cemuSaveDir: cfg.cemuSaveDir,
     ryujinxSaveDir: cfg.ryujinxSaveDir,
     edenSaveDir: cfg.edenSaveDir,
+    savagewindSaveDir: cfg.savagewindSaveDir,
     emulator: cfg.emulator,
     game: cfg.game,
     tls: cfg.tls,
@@ -133,6 +134,7 @@ export async function saveSettings() {
   envDetect.cemu = det.cemu
   envDetect.ryujinx = det.ryujinx
   envDetect.eden = det.eden
+  envDetect.savagewind = det.savagewind
   return res
 }
 
@@ -141,6 +143,7 @@ export async function loadConfig() {
   cfg.cemuSaveDir = c.cemuSaveDir || ''
   cfg.ryujinxSaveDir = c.ryujinxSaveDir || ''
   cfg.edenSaveDir = c.edenSaveDir || ''
+  cfg.savagewindSaveDir = c.savagewindSaveDir || ''
   cfg.emulator = c.emulator || 'auto'
   cfg.game = c.game || 'auto'
   cfg.tls = !!c.tls
@@ -150,6 +153,7 @@ export async function loadConfig() {
   envDetect.cemu = det.cemu
   envDetect.ryujinx = det.ryujinx
   envDetect.eden = det.eden
+  envDetect.savagewind = det.savagewind
 }
 
 export async function applySave(p) {

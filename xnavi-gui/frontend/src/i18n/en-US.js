@@ -34,6 +34,7 @@ export default {
     cemu: 'Cemu (Wii U)',
     ryujinx: 'Ryujinx (Switch)',
     eden: 'Eden (Switch)',
+    savagewind: 'Savage Wind (Recomp)',
     pickTitle: 'Select emulator (restart locating to apply)'
   },
   buttons: {
@@ -109,6 +110,7 @@ export default {
     cemuPath: 'Cemu BOTW save path (leave empty for auto):',
     ryuPath: 'Ryujinx BOTW save path (leave empty for auto):',
     edenPath: 'Eden BOTW save path (leave empty for auto):',
+    swPath: 'Savage Wind BOTW save path (leave empty for auto):',
     pathAuto: 'Auto detection',
     pathOk: '✓ Valid save path',
     pathBad: '✕ Save not found',

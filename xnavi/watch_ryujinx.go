@@ -88,6 +88,100 @@ func (t *RyujinxTracker) Rescan(req *RescanRequest) {
 	}
 }
 
+// preferLiveGroups 按"两次采样之间字节是否变化"把活对象排到最前面。
+//
+// 背景（Savage Wind 实测）：游戏把"上次存档的玩家位置"也映射在 guest RAM 里，
+// 结构与真身 Transform 完全同构（0x40 步长、位置 + 单位四元数，Run 同样成立），
+// 而且它紧贴存档锚点，"距锚点最近"这一条会让它抢到第一名 —— 于是红点被钉在
+// 读档位置不动，走动也永远 verified=false。
+// 区别只有一处：静态快照整段字节永远不变；真身每帧都在重写（实测 0.15s 内
+// 静态快照 0/1024 字节变化，真身 400+/1024 字节变化）。
+//
+// 返回重排后的候选、活跃候选数量、以及被选中候选的字节变化量（诊断用）。
+func (t *RyujinxTracker) preferLiveGroups(h uintptr, groups []EdenHit) ([]EdenHit, int, int) {
+	const topN = 64
+	const span = 0x400
+	const warm = 150 * time.Millisecond
+	const liveThreshold = 8
+
+	n := len(groups)
+	if n > topN {
+		n = topN
+	}
+	if n < 2 {
+		return groups, 0, 0
+	}
+
+	off := func(a uintptr) uintptr {
+		if a > 0x80 {
+			return a - 0x80
+		}
+		return a
+	}
+
+	first := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		first[i] = readMem(h, off(groups[i].Addr), span)
+	}
+	time.Sleep(warm)
+
+	score := make([]int, n)
+	liveN := 0
+	for i := 0; i < n; i++ {
+		a := first[i]
+		if len(a) == 0 {
+			continue
+		}
+		b := readMem(h, off(groups[i].Addr), span)
+		if len(b) != len(a) {
+			continue
+		}
+		c := 0
+		for j := range a {
+			if a[j] != b[j] {
+				c++
+			}
+		}
+		score[i] = c
+		if c >= liveThreshold {
+			liveN++
+		}
+	}
+
+	// 一个都没跳动（可能整段都没加载好）：保持原排序，交给上层的走动仲裁处理。
+	if liveN == 0 {
+		t.P("  [verify] 候选共 %d 组，前 %d 组 0.15s 内均无字节变化（静态数据）/ %d groups, none ticking in 0.15s\n",
+			len(groups), n, len(groups))
+		for i := 0; i < n && i < 6; i++ {
+			t.P("  [verify] 候选#%d 0x%X (%.1f, %.1f, %.1f) run=%d 变化 %d 字节 / candidate liveness\n",
+				i+1, groups[i].Addr, groups[i].P[0], groups[i].P[1], groups[i].P[2], groups[i].Run, score[i])
+		}
+		return groups, 0, 0
+	}
+
+	t.P("  [verify] 活跃度校验：%d/%d 组在跳动，已把活对象排到前面 / liveness: %d of %d groups ticking\n", liveN, n, liveN, n)
+
+	out := make([]EdenHit, 0, len(groups))
+	best := 0
+	for i := 0; i < n; i++ {
+		if score[i] >= liveThreshold {
+			out = append(out, groups[i])
+			if score[i] > best {
+				best = score[i]
+			}
+		}
+	}
+	for i := 0; i < n; i++ {
+		if score[i] < liveThreshold {
+			out = append(out, groups[i])
+		}
+	}
+	for i := n; i < len(groups); i++ {
+		out = append(out, groups[i])
+	}
+	return out, liveN, best
+}
+
 // readRyujinxActor 直接按小端读取 12 字节并经 WorldCoordOK 校验。
 func readRyujinxActor(h uintptr, addr uintptr) ([3]float32, bool) {
 	buf := readMem(h, addr, 12)
@@ -225,6 +319,11 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 			return false
 		}
 
+		// 门禁③：活对象优先。存档里保存的玩家位置在 guest RAM 中往往还有一份静态快照
+		// （Run 同样成立，且与本存档锚点几乎重合，因此会靠"距锚点最近"抢到第一名），
+		// 但它的字节永不变化；真身 Transform 每帧都在重写。
+		groups, liveN, liveBytes := t.preferLiveGroups(h, groups)
+
 		best := groups[0]
 		lockedAddr = best.Addr
 		cur = best.P
@@ -247,6 +346,10 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 		publishState(true, cur[0], cur[1], cur[2], false, len(groups), "ryujinx-scan")
 		t.P("  [verify] Ryujinx 捕获动力学候选地址 Addr: 0x%X (%.1f, %.1f, %.1f) -> 【请在游戏内移动角色以完成验证】 / Candidate locked: 0x%X -> [Please move Link in-game to verify]\n",
 			lockedAddr, cur[0], cur[1], cur[2], lockedAddr)
+		if liveN > 0 {
+			t.P("  [verify] Ryujinx 活跃度校验：%d 个候选在跳动，选中地址 0.15s 内变化 %d 字节（静态快照会被排到后面） / Liveness check: %d candidates ticking, locked one changed %d bytes/0.15s\n",
+				liveN, liveBytes, liveN, liveBytes)
+		}
 		return true
 	}
 

@@ -34,6 +34,7 @@ export default {
     cemu: 'Cemu (Wii U)',
     ryujinx: 'Ryujinx (Switch)',
     eden: 'Eden (Switch)',
+    savagewind: 'Savage Wind (重编译)',
     pickTitle: '选择模拟器（改后需重启定位）'
   },
   buttons: {
@@ -109,6 +110,7 @@ export default {
     cemuPath: 'Cemu 的 BOTW 存档路径（留空自动探测）：',
     ryuPath: 'Ryujinx 的 BOTW 存档路径（留空自动探测）：',
     edenPath: 'Eden 的 BOTW 存档路径（留空自动探测）：',
+    swPath: 'Savage Wind 的 BOTW 存档路径（留空自动探测）：',
     pathAuto: '自动探测',
     pathOk: '✓ 路径有效',
     pathBad: '✕ 路径未找到',

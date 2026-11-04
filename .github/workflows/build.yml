@@ -1,0 +1,77 @@
+name: Build Xnavi (GUI + core)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [savagewind]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: xnavi-gui/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 1) 命令行核心：GUI 启动时调用同目录的 xnavi-core.exe
+      - name: Build core (xnavi-core.exe)
+        working-directory: xnavi
+        run: go build -trimpath -o ../xnavi-gui/xnavi-core.exe .
+
+      # 2) Wails CLI（与 xnavi-gui/go.mod 的 v2.16.0 对齐）
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+
+      # 3) 前端依赖
+      - name: Frontend deps
+        working-directory: xnavi-gui/frontend
+        run: npm ci
+
+      # 4) 构建 GUI（Wails 会执行 vite build 并嵌入资源）
+      - name: Build GUI
+        shell: pwsh
+        working-directory: xnavi-gui
+        run: |
+          $wails = Join-Path (go env GOPATH) 'bin\wails.exe'
+          if (-not (Test-Path $wails)) { throw "wails.exe not found at $wails" }
+          & $wails build -platform windows/amd64 -clean
+          if ($LASTEXITCODE -ne 0) { throw "wails build failed: $LASTEXITCODE" }
+
+      # 5) 打包（GUI + 核心 + 说明）
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item xnavi-gui/build/bin/xnavi.exe dist/Xnavi.exe
+          Copy-Item xnavi-gui/xnavi-core.exe dist/xnavi-core.exe
+          if (Test-Path xnavi-gui/README.txt) { Copy-Item xnavi-gui/README.txt dist/README.txt }
+          if (Test-Path xnavi/ADAPT-SAVAGEWIND.md) { Copy-Item xnavi/ADAPT-SAVAGEWIND.md dist/ADAPT-SAVAGEWIND.md }
+          Compress-Archive -Path dist/* -DestinationPath Xnavi-windows-amd64.zip -Force
+          Get-ChildItem dist | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xnavi-windows-amd64
+          path: Xnavi-windows-amd64.zip
+          if-no-files-found: error
+
+      # 打 tag 时顺便发 Release，方便直接下载
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Xnavi-windows-amd64.zip

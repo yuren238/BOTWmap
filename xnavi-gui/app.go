@@ -45,7 +45,8 @@ type Config struct {
 	CemuSaveDir    string `json:"cemuSaveDir"`    // Cemu 的 BOTW 存档目录（可选）
 	RyujinxSaveDir string `json:"ryujinxSaveDir"` // Ryujinx 的 BOTW 存档目录（可选）
 	EdenSaveDir    string `json:"edenSaveDir"`    // Eden 的 BOTW 存档目录（可选）
-	Emulator       string `json:"emulator"`       // auto | cemu | ryujinx | eden
+	SwSaveDir      string `json:"savagewindSaveDir"` // Savage Wind Recomp 的 BOTW 存档目录（可选）
+	Emulator       string `json:"emulator"`       // auto | cemu | ryujinx | eden | savagewind
 	Game           string `json:"game"`           // auto | botw | totk
 	TLS            bool   `json:"tls"`             // v3.1.0：--tls 双协议，手机镜像页防息屏
 	AutoOpenMap    *bool  `json:"autoOpenMap"`    // 定位成功后自动打开在线地图（默认 true）
@@ -190,7 +191,7 @@ func (a *App) OpenSaveDir() string {
 		}
 	}
 	if savePath == "" && a.cfg != nil {
-		for _, d := range []string{a.cfg.CemuSaveDir, a.cfg.RyujinxSaveDir, a.cfg.EdenSaveDir} {
+		for _, d := range []string{a.cfg.CemuSaveDir, a.cfg.RyujinxSaveDir, a.cfg.EdenSaveDir, a.cfg.SwSaveDir} {
 			if d != "" && pathExists(d) {
 				savePath = d
 				break
@@ -236,6 +237,8 @@ func (a *App) ApplySavePath(path string) string {
 		a.cfg.RyujinxSaveDir = cleanPath
 	} else if emu == "eden" || strings.Contains(lower, "nand") || strings.Contains(lower, "eden") || strings.Contains(lower, "yuzu") {
 		a.cfg.EdenSaveDir = cleanPath
+	} else if emu == "savagewind" || strings.Contains(lower, "savagewind") || strings.Contains(lower, "savage wind") {
+		a.cfg.SwSaveDir = cleanPath
 	} else {
 		a.cfg.CemuSaveDir = cleanPath
 		a.cfg.RyujinxSaveDir = cleanPath
@@ -350,6 +353,9 @@ func (a *App) StartCore(emu string) string {
 	}
 	if a.cfg.EdenSaveDir != "" {
 		args = append(args, "--eden-save-dir="+a.cfg.EdenSaveDir)
+	}
+	if a.cfg.SwSaveDir != "" {
+		args = append(args, "--savagewind-save-dir="+a.cfg.SwSaveDir)
 	}
 	if a.cfg != nil && a.cfg.TLS {
 		args = append(args, "--tls")
@@ -689,7 +695,7 @@ func (a *App) EnvDetect() map[string]any {
 	a.mu.Lock()
 	cfg := a.cfg
 	a.mu.Unlock()
-	res := map[string]any{"ryujinx": false, "cemu": false, "eden": false}
+	res := map[string]any{"ryujinx": false, "cemu": false, "eden": false, "savagewind": false}
 	if cfg != nil {
 		if cfg.CemuSaveDir != "" && pathExists(cfg.CemuSaveDir) {
 			res["cemu"] = true
@@ -699,6 +705,9 @@ func (a *App) EnvDetect() map[string]any {
 		}
 		if cfg.EdenSaveDir != "" && pathExists(cfg.EdenSaveDir) {
 			res["eden"] = true
+		}
+		if cfg.SwSaveDir != "" && pathExists(cfg.SwSaveDir) {
+			res["savagewind"] = true
 		}
 	}
 	return res

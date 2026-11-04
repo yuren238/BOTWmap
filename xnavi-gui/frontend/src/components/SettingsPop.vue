@@ -36,6 +36,13 @@
           <button @click="pickDir('eden')" class="bg-slate-700 hover:bg-slate-600 px-2 rounded text-xs">{{ t('buttons.browse') }}</button>
         </div>
       </div>
+      <div>
+        <label class="block text-slate-400 mb-1">{{ t('settings.swPath') }}</label>
+        <div class="flex gap-1">
+          <input v-model="cfg.savagewindSaveDir" :placeholder="t('settings.pathAuto')" class="flex-1 bg-[#0d1117] border border-slate-700 rounded px-2 py-1.5 text-white font-mono text-[11px] focus:border-blue-500 focus:outline-none placeholder-slate-600" />
+          <button @click="pickDir('sw')" class="bg-slate-700 hover:bg-slate-600 px-2 rounded text-xs">{{ t('buttons.browse') }}</button>
+        </div>
+      </div>
     </div>
 
     <!-- 手机防息屏 -->
@@ -78,6 +85,7 @@ async function pickDir(kind) {
     if (kind === 'cemu') cfg.cemuSaveDir = d
     else if (kind === 'ryu') cfg.ryujinxSaveDir = d
     else if (kind === 'eden') cfg.edenSaveDir = d
+    else if (kind === 'sw') cfg.savagewindSaveDir = d
   }
 }
 

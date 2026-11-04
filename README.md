@@ -23,18 +23,18 @@
 
 ## 实时角色导航（可选）
 
-游戏时想在地图上看到自己当前位置？配合 **xnavi**（支持 Cemu / Ryujinx / Eden 三平台）：
+游戏时想在地图上看到自己当前位置？配合 **xnavi**（支持 Cemu / Ryujinx / Eden，以及原生重编译版 Savage Wind Recomp）：
 
 ![xnavi 定位界面](https://botw.yalin.site/media/xnavi-gui-hero-v2.jpg)
 
 1. 启动模拟器并进入游戏
 2. 运行 `xnavi.exe`，点击「开始定位」
 3. 打开在线地图，右下角显示实时坐标
-4. 手机/平板跟随（可选）：需本地离线地图——下载地图包 `botwmap-vX.Y.Z.zip`（Releases 里 `botwmap-vX.Y.Z` 前缀）解压到 `xnavi.exe` 同目录（与导航包合并），GUI 扫码即可；详见 xnavi 压缩包内 README
+4. 手机/平板跟随（可选）：与电脑同一 WiFi，点地图右下角 📱 扫码，手机浏览器打开即当第二屏（红点跟随 / 收集进度同步）；瓦片已内置在本仓库 `app/assets/tiles`（10096 张，z1~z7，68MB），断网可用
 
-- 三平台自动识别，无需手选；仅读内存，不注入、不改游戏
+- 四平台自动识别（Cemu / Ryujinx / Eden / Savage Wind），无需手选；仅读内存，不注入、不改游戏
 - 存档联动：游戏保存后 ≤2 秒地图进度自动刷新
-- 下载与使用说明见 [Releases](https://github.com/yalincc/BOTWmap/releases)（`xnavi-vX.Y.Z` 前缀）
+- 下载与使用说明见 [Releases](https://github.com/yuren238/BOTWmap/releases)（本仓库适配版 tag 为 `v3.2.2-savagewind.*`；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）
 
 ### 原生重编译版 Savage Wind Recomp
 
@@ -48,6 +48,9 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 
 首次定位会锁定一个候选地址并提示「请在游戏内移动角色以完成验证」，走动 3~5 步即完全锁定。
 适配细节、实测数据与已知限制见 [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md)。
+
+开箱即用的 Windows 包：[**v3.2.2-savagewind.1**](https://github.com/yuren238/BOTWmap/releases/tag/v3.2.2-savagewind.1)
+（`Xnavi.exe` GUI + `xnavi-core.exe` 定位核心，解压后两个 exe 放同一目录，平台下拉选 Savage Wind）。
 
 ## 核心功能
 

@@ -36,19 +36,24 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
-      # 3) 前端依赖
-      - name: Frontend deps
+      # 3) 前端依赖 + 构建（Wails 默认不会自动跑，必须显式产出 frontend/dist）
+      - name: Build frontend
+        shell: pwsh
         working-directory: xnavi-gui/frontend
-        run: npm ci
+        run: |
+          npm ci
+          npm run build
+          if (-not (Test-Path dist/index.html)) { throw "frontend build produced no dist/index.html" }
+          Get-ChildItem dist | Select-Object Name, Length
 
-      # 4) 构建 GUI（Wails 会执行 vite build 并嵌入资源）
+      # 4) 构建 GUI（-s 跳过前端，前端已在上一步构建好并嵌入）
       - name: Build GUI
         shell: pwsh
         working-directory: xnavi-gui
         run: |
           $wails = Join-Path (go env GOPATH) 'bin\wails.exe'
           if (-not (Test-Path $wails)) { throw "wails.exe not found at $wails" }
-          & $wails build -platform windows/amd64 -clean
+          & $wails build -platform windows/amd64 -clean -s
           if ($LASTEXITCODE -ne 0) { throw "wails build failed: $LASTEXITCODE" }
 
       # 5) 打包（GUI + 核心 + 说明）

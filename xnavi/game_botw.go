@@ -217,6 +217,8 @@ func (g *gameBotw) ValidRaw(mem []float32, littleEndian bool) bool {
 //   - Cemu: 0x1055300C（社区公开针位 koko-yl/BotWRamWatch，Cemu 2.6 + JP v208 实测有效）
 //           备用 0xC1F8BF4（navicemu 多块固定偏移试读的备选）
 //   - Ryujinx / Eden: 空（统一走动力学根地址动态扫描锁定架构，不再使用外观槽固定偏移）
+//   - SavageWind: 空（原生重编译版没有社区偏移样本；首次靠存档锚点窗口扫描，
+//     锁定后由 known.go 写入"相对最大 guest 块基址的偏移"，二次启动秒锁）
 func (g *gameBotw) KnownOffsets(p Platform) []uintptr {
 	if p == nil {
 		return nil
@@ -224,7 +226,7 @@ func (g *gameBotw) KnownOffsets(p Platform) []uintptr {
 	switch p.Name() {
 	case "Cemu":
 		return []uintptr{0x1055300C, 0xC1F8BF4}
-	case "Eden", "Ryujinx":
+	case "Eden", "Ryujinx", "SavageWind":
 		return nil
 	default:
 		return nil
@@ -361,7 +363,7 @@ func logSaveFreshness(a *SaveAnchor) {
 func (g *gameBotw) SaveAnchors(p Platform) []*SaveAnchor {
 	files := allSaveFiles(p)
 	switch p.Name() {
-	case "Cemu", "Eden":
+	case "Cemu", "Eden", "SavageWind":
 		// #25 空档陷阱（2026-10-20 05:19 实测）：不能只按 mtime 取"最新"——
 		// 6 个轮转槽里可能混着空档/新档（日志 `done: shrines 0/136`），其坐标是
 		// 初始位置（实测锚点 (-1026.5, 252.3, 1803.2)，玩家在 5000 米外的阿卡莱），

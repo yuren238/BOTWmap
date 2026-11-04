@@ -5,12 +5,15 @@
 // 原理：读模拟器进程内存定位玩家坐标 → HTTP API（127.0.0.1:8766）
 // → 在线地图页跨域连接显示红点/轨迹/导航。
 //
-// 平台：auto（默认，Ryujinx 优先）| ryujinx | cemu —— 内存布局/字节序/存档
+// 平台：auto（默认）| ryujinx | cemu | eden | savagewind —— 内存布局/字节序/存档
 // 差异全部由平台驱动隔离；游戏：auto（默认）| botw —— 坐标语义/存档/
 // 进度差异由游戏适配层隔离；定位核心（watch.go 单一状态机）不感知平台。
 // （TOTK 已于 2026-10-02 拆分到 TOTKmap/live-go 独立工程，见交接文档。）
 //
-// 用法：xnavi.exe [port] [--no-open] [--no-save] [--emu=auto|ryujinx|cemu]
+// Savage Wind（原生重编译版）由 platform_savagewind.go 适配：进程 savagewind、
+// guest 内存原地映射、存档 <游戏目录>/save/save_0；详见 docs/ADAPT-SAVAGEWIND.md。
+//
+// 用法：xnavi.exe [port] [--no-open] [--no-save] [--emu=auto|ryujinx|cemu|eden|savagewind]
 //                [--game=auto|botw] [--save-dir=...] [--dump]
 
 package main
@@ -79,6 +82,8 @@ func main() {
 			setRyujinxSaveDirOverride(strings.TrimPrefix(a, "--ryujinx-save-dir="))
 		case strings.HasPrefix(a, "--eden-save-dir="):
 			setEdenSaveDirOverride(strings.TrimPrefix(a, "--eden-save-dir="))
+		case strings.HasPrefix(a, "--savagewind-save-dir="):
+			setSavageWindSaveDirOverride(strings.TrimPrefix(a, "--savagewind-save-dir="))
 		case strings.HasPrefix(a, "--"):
 			// ignore
 		default:
@@ -92,6 +97,7 @@ func main() {
 	var rp ryujinxPlatform
 	var cp cemuPlatform
 	var ep edenPlatform
+	var sp savageWindPlatform
 	switch emu {
 	case "ryujinx":
 		setPlatform(&rp)
@@ -99,18 +105,26 @@ func main() {
 		setPlatform(&cp)
 	case "eden":
 		setPlatform(&ep)
+	case "savagewind", "savage-wind", "sw":
+		setPlatform(&sp)
 	default: // auto
 		// 游戏感知选择：优先"进程在跑且已加载游戏大块内存（≥256MB）"的平台，
 		// 解决 Ryujinx 进程活着但游戏已关时启动永远选不中 Cemu 的问题；
 		// 都没加载游戏则退回按进程存在选（Ryujinx 优先），后续状态机 0 块检测会再切。
+		// Savage Wind 排在最前：它是原生重编译版，进程与模拟器可共存，
+		// 只要它在跑就说明用户要跟的是它（fork 的主目标平台）。
 		autoPlatform = true
 		switch {
+		case sp.Attach() && len(sp.Blocks(256.0)) > 0:
+			setPlatform(&sp)
 		case rp.Attach() && len(rp.Blocks(256.0)) > 0:
 			setPlatform(&rp)
 		case cp.Attach() && len(cp.Blocks(256.0)) > 0:
 			setPlatform(&cp)
 		case ep.Attach() && len(ep.Blocks(256.0)) > 0:
 			setPlatform(&ep)
+		case sp.Attach():
+			setPlatform(&sp)
 		case rp.Attach():
 			setPlatform(&rp)
 		case cp.Attach():

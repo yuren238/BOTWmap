@@ -36,6 +36,19 @@
 - 存档联动：游戏保存后 ≤2 秒地图进度自动刷新
 - 下载与使用说明见 [Releases](https://github.com/yalincc/BOTWmap/releases)（`xnavi-vX.Y.Z` 前缀）
 
+### 原生重编译版 Savage Wind Recomp
+
+本 fork 额外适配了 [Savage Wind Recomp](https://github.com/Revivedx/SavageWindRecomp)
+（《旷野之息》Switch 1.9.0 的静态重编译原生 PC 版）。地图与点位完全复用，差别只在定位程序：
+
+```bat
+xnavi.exe --emu=savagewind
+REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewind-save-dir="...\save"
+```
+
+首次定位会锁定一个候选地址并提示「请在游戏内移动角色以完成验证」，走动 3~5 步即完全锁定。
+适配细节、实测数据与已知限制见 [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md)。
+
 ## 核心功能
 
 | 功能 | 说明 |

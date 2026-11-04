@@ -28,7 +28,9 @@ const (
 )
 
 // validSaveVersions 存档格式版本号（Switch/Wii U 共用，仅字节序相反）。
-var validSaveVersions = []uint32{0x24E2, 0x24EE, 0x2588, 0x29C0, 0x2A46, 0x3EF8, 0x3EF9, 0x471A, 0x471B, 0x471E}
+// 0x4730 = 游戏 1.9.0（Savage Wind 对齐版本，实测 game_data.sav 1027248 字节、
+// 小端、哈希表仍在 0x0C 起的 8 字节条目区，PLAYER_POSITION 连续三块）。
+var validSaveVersions = []uint32{0x24E2, 0x24EE, 0x2588, 0x29C0, 0x2A46, 0x3EF8, 0x3EF9, 0x471A, 0x471B, 0x471E, 0x4730}
 
 // SaveAnchor 一条存档的解析结果：内存三元组 = (X east, Y altitude, Z south+)。
 type SaveAnchor struct {
@@ -186,8 +188,15 @@ func saveSourceTag(p Platform, savePath string) string {
 		return strings.HasPrefix(saveClean, ovClean) || saveClean == ovClean
 	}
 
-	if checkMatch(cemuSaveDirOverride) || checkMatch(edenSaveDirOverride) || checkMatch(ryujinxSaveDirOverride) {
+	if checkMatch(cemuSaveDirOverride) || checkMatch(edenSaveDirOverride) || checkMatch(ryujinxSaveDirOverride) ||
+		checkMatch(savageWindSaveDirOverride) {
 		return "手动指定"
+	}
+
+	// Savage Wind 的目录结构有唯一特征 save/save_0/<槽位>/game_data.sav，
+	// 认路径即可判定来源，不必依赖进程自省。
+	if strings.Contains(strings.ToLower(filepath.ToSlash(savePath)), "/save/save_0/") {
+		return "自省命中: Savage Wind 目录"
 	}
 
 	platName := ""

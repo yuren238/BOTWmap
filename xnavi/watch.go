@@ -165,6 +165,10 @@ func createTrackerForPlatform(p Platform) Tracker {
 		if ep, ok := p.(*edenPlatform); ok {
 			return NewEdenTracker(ep)
 		}
+	case "SavageWind":
+		// 原生重编译版：guest 内存原地映射 + 小端，直接复用 Ryujinx 扫描管道
+		// （Run 门禁降为 0，靠锚点窗口 + 副本数 + 走动仲裁确认，见 NewSavageWindTracker）。
+		return NewSavageWindTracker(p)
 	}
 	return nil
 }
@@ -219,7 +223,7 @@ func stateMachine() {
 				// v3.2.2 诊断：模拟器未启动时用户在日志里看不到任何提示 → 10s 一次指路
 				if time.Since(lastWaitLog) >= 10*time.Second {
 					lastWaitLog = time.Now()
-					fmt.Println("  [wait] 未检测到模拟器 —— 请先启动 Cemu/Ryujinx/Eden 并进入游戏（10 秒后重试）/ No emulator detected — start Cemu/Ryujinx/Eden and enter the game")
+					fmt.Println("  [wait] 未检测到游戏进程 —— 请先启动 Cemu/Ryujinx/Eden/Savage Wind 并进入游戏（10 秒后重试）/ No game process detected — start Cemu/Ryujinx/Eden/Savage Wind and enter the game")
 				}
 				continue
 			}

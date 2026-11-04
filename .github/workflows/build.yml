@@ -59,6 +59,8 @@ jobs:
       # 5) 打包（GUI + 核心 + 地图前端 + 说明）
       #    地图前端 app/ 必须一起打：宝箱/装备/任务的显示判定全在 app/js 里（exe 只提供
       #    /pos /progress /save 数据），只发 exe 等于前端修复没发出去。
+      #    瓦片(61MB)+克洛格原图(7MB) 不打进包，改由线上站点提供（asset-base.js 覆写），
+      #    这样包里是「我们的前端逻辑 + 线上底图数据」，体积从 64MB 降到约 10MB。
       - name: Package
         shell: pwsh
         run: |
@@ -68,15 +70,28 @@ jobs:
           if (Test-Path xnavi-gui/README.txt) { Copy-Item xnavi-gui/README.txt dist/README.txt }
           if (Test-Path xnavi/ADAPT-SAVAGEWIND.md) { Copy-Item xnavi/ADAPT-SAVAGEWIND.md dist/ADAPT-SAVAGEWIND.md }
           if (-not (Test-Path app/index.html)) { throw "app/index.html missing - map frontend not found" }
-          robocopy app dist/app /E /NFL /NDL /NJH /NJS /NP | Out-Null
+          $root = (Get-Location).Path
+          robocopy app dist/app /E /XD "$root\app\assets\tiles" "$root\app\assets\korok" /NFL /NDL /NJH /NJS /NP | Out-Null
           if ($LASTEXITCODE -gt 7) { throw "robocopy app failed: $LASTEXITCODE" }
           if (-not (Test-Path dist/app/js/save_upload.js)) { throw "app/js/save_upload.js missing in package" }
-          # webp 瓦片本身已压缩，-mx=1 足够；7z 比 Compress-Archive 快一个量级（1 万+ 小文件）
-          $sz = '7z'
+          if (Test-Path dist/app/assets/tiles) { throw "tiles must NOT be packed (use online base)" }
+          # 把资源根指向线上站点（前端逻辑仍是本仓库版本）
+          $base = "window.BOTW_ASSET_BASE = 'https://botw.yalin.site/';`r`nwindow.assetURL = function (p) { return (window.BOTW_ASSET_BASE || '') + p; };"
+          Set-Content -Path dist/app/js/asset-base.js -Value $base -Encoding ASCII
+          # 7z 打包（比 Compress-Archive 快一个量级）；没有 7z 时退回 .NET ZipFile
+          $sz = ''
           if (Test-Path "${env:ProgramFiles}\7-Zip\7z.exe") { $sz = "${env:ProgramFiles}\7-Zip\7z.exe" }
-          & $sz a -tzip -mx=1 -bso0 -bsp0 Xnavi-windows-amd64.zip (Join-Path $PWD 'dist\*')
-          if ($LASTEXITCODE -ne 0) { throw "archive failed: $LASTEXITCODE" }
-          Get-ChildItem Xnavi-windows-amd64.zip | Select-Object Name, Length
+          elseif (Get-Command 7z -ErrorAction SilentlyContinue) { $sz = '7z' }
+          $zip = Join-Path $root 'Xnavi-windows-amd64.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          if ($sz) {
+            & $sz a -tzip -mx=5 -bso0 -bsp0 $zip (Join-Path $root 'dist\*')
+            if ($LASTEXITCODE -ne 0) { throw "archive failed: $LASTEXITCODE" }
+          } else {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $root 'dist'), $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+          }
+          Get-ChildItem $zip | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,9 +115,11 @@ jobs:
             | --- | --- |
             | `Xnavi.exe` | GUI 壳（Wails + WebView2），平台下拉已含 Savage Wind |
             | `xnavi-core.exe` | 定位核心，GUI 点「开始定位」时自动拉起 |
-            | `app/` | 地图页面（瓦片 + 图标 + **前端显示逻辑**），**必须与两个 exe 同目录，不要删** |
+            | `app/` | 地图页面与**前端显示逻辑**（约 12 MB；底图瓦片走线上，不占包体积），**必须与两个 exe 同目录，不要删** |
             | `ADAPT-SAVAGEWIND.md` | 适配说明：数据源 / 路径 / 加载方式 / 实测数据 / 限制 |
             | `README.txt` | 快速上手 |
+
+            > 底图瓦片从 `botw.yalin.site` 在线加载，首次打开需联网。断网时底图空白，但标记点、存档进度、红点定位仍可用。
 
             ## 用法
 

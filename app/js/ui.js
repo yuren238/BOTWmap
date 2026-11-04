@@ -1027,7 +1027,7 @@ const UI = (() => {
     $('cardCat').textContent = isEn ? ('Korok Seed · No.' + k.no) : ('克洛格的果实 · No.' + k.no);
     $('cardCat').style.borderColor = '#ffd700';
     $('cardCat').style.color = '#ffd700';
-    let html = '<div class="korok-shot-wrap"><img class="korok-shot" data-src="assets/korok/' + esc(k.img) + '" alt="' + (isEn ? ('Korok No.' + k.no) : ('克洛格 No.' + k.no)) + '"><span class="korok-zoom">' + (window.I18N ? window.I18N.t('card.zoom', '查看原图') : '查看原图') + '</span></div>';
+    let html = '<div class="korok-shot-wrap"><img class="korok-shot" data-src="' + (window.assetURL ? window.assetURL('assets/korok/' + esc(k.img)) : 'assets/korok/' + esc(k.img)) + '" alt="' + (isEn ? ('Korok No.' + k.no) : ('克洛格 No.' + k.no)) + '"><span class="korok-zoom">' + (window.I18N ? window.I18N.t('card.zoom', '查看原图') : '查看原图') + '</span></div>';
     const hint = isEn ? (k.hint_en || k.hint_cn || '') : (k.hint_cn || k.hint_en || '');
     html += '<div class="row fd-row"><span class="fd-l">' + (window.I18N ? window.I18N.t('card.solution', '解法') : '解法') + '</span><span class="fd-v fd-v-accent">' + esc(hint) + '</span></div>';
     el.innerHTML = html;

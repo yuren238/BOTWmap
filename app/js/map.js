@@ -304,7 +304,7 @@ class BotwMap {
       }
     };
     img.onerror = () => this.tilePending.delete(key);
-    img.src = 'assets/tiles/' + key + '.webp';
+    img.src = (window.assetURL ? window.assetURL('assets/tiles/' + key + '.webp') : 'assets/tiles/' + key + '.webp');
   }
 
   /* ---------- 视口 ---------- */

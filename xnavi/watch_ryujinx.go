@@ -88,6 +88,40 @@ func (t *RyujinxTracker) Rescan(req *RescanRequest) {
 	}
 }
 
+// anyWorldTicking 判断世界是否仍在更新：逐个采样候选记录，任一条在 120ms 内发生字节变化
+// 即认为世界在跑（此时若锁定记录纹丝不动，就是锁到了静态副本）。
+// 全部静止 = 玩家大概率开着菜单/背包/加载中，世界暂停，应保锁而不是掉锁。
+func (t *RyujinxTracker) anyWorldTicking(h uintptr, cands []candSlot) bool {
+	n := len(cands)
+	if n == 0 {
+		return false
+	}
+	if n > 6 {
+		n = 6
+	}
+	first := make([][]byte, n)
+	for i := 0; i < n; i++ {
+		first[i] = readMem(h, cands[i].addr, 64)
+	}
+	time.Sleep(120 * time.Millisecond)
+	for i := 0; i < n; i++ {
+		a := first[i]
+		if len(a) == 0 {
+			continue
+		}
+		b := readMem(h, cands[i].addr, 64)
+		if len(b) != len(a) {
+			continue
+		}
+		for j := range a {
+			if a[j] != b[j] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // preferLiveGroups 按"两次采样之间字节是否变化"把活对象排到最前面。
 //
 // 背景（Savage Wind 实测）：游戏把"上次存档的玩家位置"也映射在 guest RAM 里，
@@ -487,18 +521,25 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 			// 3. LOCKED：死守 lockedAddr，过图黑屏平滑保持，落地直接接管，绝不主动掉锁
 			// 例外：未获走动确认、且锁定记录已完全停止写入（static）时，说明锁到的是静态副本，
 			// 必须掉锁重扫，否则红点会永久冻结。
+			// 但"全静止"也可能是玩家开着菜单/背包（世界暂停）——那时其它候选同样不动，
+			// 这种情况要保住锁，否则菜单期间红点会凭空消失。
 			if !verified && !lockSince.IsZero() && time.Since(lockSince) > 45*time.Second {
-				a := readMem(h, lockedAddr-0x80, 256)
-				time.Sleep(120 * time.Millisecond)
-				b := readMem(h, lockedAddr-0x80, 256)
-				frozen := len(a) == 256 && len(b) == 256
-				for i := 0; frozen && i < len(a); i++ {
-					if a[i] != b[i] {
-						frozen = false
+				frozen := func() bool {
+					a := readMem(h, lockedAddr-0x80, 256)
+					time.Sleep(120 * time.Millisecond)
+					b := readMem(h, lockedAddr-0x80, 256)
+					if len(a) != 256 || len(b) != 256 {
+						return false
 					}
-				}
-				if frozen {
-					t.P("  [relock] 锁定记录 45 秒无走动且完全不再写入 -> 判定为静态副本，重新扫描 / Stale lock (frozen, unverified), rescanning\n")
+					for i := range a {
+						if a[i] != b[i] {
+							return false
+						}
+					}
+					return true
+				}()
+				if frozen && t.anyWorldTicking(h, cands) {
+					t.P("  [relock] 锁定记录 45 秒无走动且不再写入，但其它候选仍在刷新 -> 判定为静态副本，重新扫描 / Stale lock (frozen while world live), rescanning\n")
 					reset("relock-frozen")
 					continue
 				}

@@ -79,4 +79,49 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          name: Xnavi ${{ github.ref_name }} · Savage Wind 适配版
           files: Xnavi-windows-amd64.zip
+          body: |
+            BOTWmap 地图工具 + xnavi 实时定位，适配 **Savage Wind Recomp**（原生重编译版，非模拟器）。
+
+            ## 包含文件
+
+            | 文件 | 作用 |
+            | --- | --- |
+            | `Xnavi.exe` | GUI 壳（Wails + WebView2），平台下拉已含 Savage Wind |
+            | `xnavi-core.exe` | 定位核心，GUI 点「开始定位」时自动拉起 |
+            | `ADAPT-SAVAGEWIND.md` | 适配说明：数据源 / 路径 / 加载方式 / 实测数据 / 限制 |
+            | `README.txt` | 快速上手 |
+
+            ## 用法
+
+            1. 解压到任意目录，**两个 exe 必须放在同一目录**
+            2. 打开 `Xnavi.exe`，平台下拉选择 **Savage Wind**
+            3. 点「开始定位」，红点即出现在游戏内当前位置
+            4. 手机/平板与电脑同一 WiFi，点地图右下角 📱 扫码，可当第二屏跟随
+
+            存档路径留空会自动取 `<游戏目录>\Savage Wind\save`，也可在设置页手动指定。
+
+            ## 本次适配要点
+
+            - **平台驱动** `platform_savagewind.go`：进程 `savagewind`（排除 Configuration 壳）；guest RAM 为 `0x7000000000+` 的 RW 私有区（实测 `0x723FF00000` 起 3121MB，小端、guest 偏移即进程偏移）
+            - **存档**：版本白名单补 `0x4730`（游戏 1.9.0），其余结构与 Switch 版一致；主档按 mtime 最新
+            - **定位修复**：新增活跃度门禁 —— 游戏会把「上次存档的玩家位置」也映射进内存，结构与真身 Transform 完全同构且紧贴锚点，旧排序会锁到这份静态快照（红点冻结在读档点、永远 `verified=false`）。改为锁前对候选采样 1KB 窗口两次（间隔 150ms），按字节变化把活对象排到最前
+            - **GUI**：新增 Savage Wind 平台项、存档路径设置，中英文案同步
+
+            ## 实测数据
+
+            - 锚点 120m 窗口 **3.4~4.4 秒**锁定；静止时坐标抖动 ±0.01m
+            - 玩家走动后锁定地址同步位移 **71.6m**，确认锁到林克本体而非静态数据
+            - 存档进度：shrine 4/136、tower 1/15、korok 1/900，与存档一致
+            - 活跃度对照：存档快照 0/1024 字节变化，真身 400~600/1024
+
+            ## 已知限制
+
+            - `verified` 需玩家走动 3~5 步后才置真（上游 Ryujinx/Eden 同款设计）；站着不动时位置正确但状态显示未确认
+            - 仅在 Windows + Savage Wind 0.4.1-alpha.4 / 游戏 1.9.0 实测；Savage Wind 仍在 alpha，若 guest 映射方式变化需重新核对 `Blocks()` 筛选条件
+            - 首次全量扫描约 3.4~4.4s，之后只读单个地址，开销可忽略
+
+            ---
+
+            基于 [yalincc/BOTWmap](https://github.com/yalincc/BOTWmap) 修改，地图数据与前端沿用上游。

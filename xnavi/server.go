@@ -150,6 +150,17 @@ func exeDirApp() string {
 	return ""
 }
 
+// noCacheAssets 给挂载的地图静态资源加 no-cache：浏览器可以存副本，但每次使用前
+// 必须用 Last-Modified/ETag 向服务端重验证（未改动时只回 304，几乎无开销）。
+// 目的：改完前端（app/ 目录直接挂载）刷新即生效，不再出现「代码已修、浏览器还在跑旧 JS」
+// 导致老问题看起来没修好的假象。
+func noCacheAssets(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
+}
+
 // resolveBotwFS 返回本地地图静态处理器；没有就返回 nil（调用方回落到引导页）。
 // 惰性解析 + mutex：用户按引导页提示解压 app/ 后，刷新页面即可生效，不必重启 xnavi。
 // 已挂载成功后不再重复 stat（botwFS != nil 直接返回）。
@@ -169,7 +180,7 @@ func resolveBotwFS() http.Handler {
 			c = abs
 		}
 		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			botwFS = http.StripPrefix("/botw", http.FileServer(http.Dir(c)))
+			botwFS = http.StripPrefix("/botw", noCacheAssets(http.FileServer(http.Dir(c))))
 			fmt.Printf("  [asset] BOTWmap assets mounted: %s\n", c)
 			return botwFS
 		}

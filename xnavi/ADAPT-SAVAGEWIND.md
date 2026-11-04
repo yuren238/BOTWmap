@@ -156,3 +156,28 @@ Savage Wind 会在 guest RAM 里留下多份与真身同构的历史副本（0x4
 
 排查这类问题的通用方法：用 `_probe/active_all.py <pid> <x> <y> <z>` 做不限距离的全内存活跃扫描，
 对比「xnavi 说全静止」和「实际有多少组在跳」，就能立刻区分是锚点错、采样漏，还是世界真的没在跑。
+
+## 10. 换档后宝箱/装备/任务显示「已完成」（2026-11-05 修复）
+
+现象：新开大师模式档后，地图上大片宝箱显示为已开启，但存档里一个都没开。
+
+architectural 前提：**宝箱是否已开由前端判定，exe 不参与**。exe 只负责把 `game_data.sav` 二进制经
+`/save` 交给浏览器，`app/js/save_upload.js` 解析 flag、`app/js/chest.js` 决定画不画成已开。
+所以这类问题改前端即可，与地图瓦片数据无关。
+
+| 层次 | 根因 | 处理 |
+| --- | --- | --- |
+| ① 注入被跳过 | 三处存档同步都写成「非空才覆盖」：`if (chestPts.length && ...)`。新档 0 宝箱 → 直接跳过 → localStorage 里 `botwmap.chestSaveDone.v1` 的上一档集合原样生效 | 改为空集也注入（整集替换） |
+| ② 换档无感知 | 缓存键只按「宝箱」存，不区分存档来源，换档后没人清 | 加 `PlayTime` 指纹（`botwmap.savePlaytime.v1`）：时长回退 >30s 判定换档，自动清宝箱/装备/任务快照 |
+| ③ 清理入口缺失 | `save_upload.js` 一直在 `getElementById('btnClearDone')`，但 `index.html` 里从来没这个元素（上游删了 DOM、留了 JS） | 补 🧹 图标按钮 |
+| ④ 旧 JS 假象 | 静态资源无缓存头，浏览器自行缓存 `app/js/*.js`，代码改了刷新仍跑旧版 | 静态资源统一 `Cache-Control: no-cache`（304 重验证）；脚本 URL 加版本号 |
+
+`Ctrl+F5` 清不掉这个问题，因为它清的是 HTTP 缓存，而残留数据在 **localStorage**。手动清理：
+
+```js
+['botwmap.done.v1','botwmap.chestDone.v1','botwmap.chestSaveDone.v1','botwmap.equipDone.v1',
+ 'botwmap.equipSaveDone.v1','botwmap.questDone.v1','botwmap.questSave.v1'].forEach(k=>localStorage.removeItem(k));
+```
+
+**发布注意**：本 fork 的前端修复位于 `app/`，而 `app/` 不打进 exe。发布包必须把 `app/` 一起打包，
+否则用户只拿到新 exe + 旧地图包，前端修复等于没发。当前 Release 已包含 `app/` 目录。

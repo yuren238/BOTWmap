@@ -56,7 +56,9 @@ jobs:
           & $wails build -platform windows/amd64 -clean -s
           if ($LASTEXITCODE -ne 0) { throw "wails build failed: $LASTEXITCODE" }
 
-      # 5) 打包（GUI + 核心 + 说明）
+      # 5) 打包（GUI + 核心 + 地图前端 + 说明）
+      #    地图前端 app/ 必须一起打：宝箱/装备/任务的显示判定全在 app/js 里（exe 只提供
+      #    /pos /progress /save 数据），只发 exe 等于前端修复没发出去。
       - name: Package
         shell: pwsh
         run: |
@@ -65,8 +67,16 @@ jobs:
           Copy-Item xnavi-gui/xnavi-core.exe dist/xnavi-core.exe
           if (Test-Path xnavi-gui/README.txt) { Copy-Item xnavi-gui/README.txt dist/README.txt }
           if (Test-Path xnavi/ADAPT-SAVAGEWIND.md) { Copy-Item xnavi/ADAPT-SAVAGEWIND.md dist/ADAPT-SAVAGEWIND.md }
-          Compress-Archive -Path dist/* -DestinationPath Xnavi-windows-amd64.zip -Force
-          Get-ChildItem dist | Select-Object Name, Length
+          if (-not (Test-Path app/index.html)) { throw "app/index.html missing - map frontend not found" }
+          robocopy app dist/app /E /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -gt 7) { throw "robocopy app failed: $LASTEXITCODE" }
+          if (-not (Test-Path dist/app/js/save_upload.js)) { throw "app/js/save_upload.js missing in package" }
+          # webp 瓦片本身已压缩，-mx=1 足够；7z 比 Compress-Archive 快一个量级（1 万+ 小文件）
+          $sz = '7z'
+          if (Test-Path "${env:ProgramFiles}\7-Zip\7z.exe") { $sz = "${env:ProgramFiles}\7-Zip\7z.exe" }
+          & $sz a -tzip -mx=1 -bso0 -bsp0 Xnavi-windows-amd64.zip (Join-Path $PWD 'dist\*')
+          if ($LASTEXITCODE -ne 0) { throw "archive failed: $LASTEXITCODE" }
+          Get-ChildItem Xnavi-windows-amd64.zip | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
@@ -90,15 +100,16 @@ jobs:
             | --- | --- |
             | `Xnavi.exe` | GUI 壳（Wails + WebView2），平台下拉已含 Savage Wind |
             | `xnavi-core.exe` | 定位核心，GUI 点「开始定位」时自动拉起 |
+            | `app/` | 地图页面（瓦片 + 图标 + **前端显示逻辑**），**必须与两个 exe 同目录，不要删** |
             | `ADAPT-SAVAGEWIND.md` | 适配说明：数据源 / 路径 / 加载方式 / 实测数据 / 限制 |
             | `README.txt` | 快速上手 |
 
             ## 用法
 
-            1. 解压到任意目录，**两个 exe 必须放在同一目录**
+            1. 解压到任意目录，`Xnavi.exe`、`xnavi-core.exe`、`app/` **必须在同一目录**（本包已自带地图，无需另下）
             2. 打开 `Xnavi.exe`，平台下拉选择 **Savage Wind**
             3. 点「开始定位」，红点即出现在游戏内当前位置
-            4. 手机/平板与电脑同一 WiFi，点地图右下角 📱 扫码，可当第二屏跟随
+            4. 手机/平板与电脑同一 WiFi，打开 `http://<电脑IP>:8766/botw/?follow=1` 可当第二屏跟随
 
             存档路径留空会自动取 `<游戏目录>\Savage Wind\save`，也可在设置页手动指定。
 

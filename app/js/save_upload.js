@@ -125,6 +125,16 @@ const SAVE_UPLOAD = (() => {
         try { localStorage.removeItem('botwmap.questDone.v1'); } catch (e) {}
         try { localStorage.removeItem('botwmap.questSave.v1'); } catch (e) {}
         if (window.QuestDone && window.QuestDone.clearAll) window.QuestDone.clearAll();
+        /* 2026-11-04 修复：宝箱 / 装备的完成集另有独立缓存键，不跟着 done.v1 走。
+           只清 done.v1 会出现「点了清空，宝箱仍大片区显示已开」（新档尤其明显）。 */
+        try { localStorage.removeItem('botwmap.chestDone.v1'); } catch (e) {}
+        try { localStorage.removeItem('botwmap.chestSaveDone.v1'); } catch (e) {}
+        try { localStorage.removeItem('botwmap.equipDone.v1'); } catch (e) {}
+        try { localStorage.removeItem('botwmap.equipSaveDone.v1'); } catch (e) {}
+        if (window.ChestSync && window.ChestSync.loadSave) window.ChestSync.loadSave([]);
+        if (window.EquipPanel && window.EquipPanel.EquipDone && window.EquipPanel.EquipDone.loadSave) {
+          window.EquipPanel.EquipDone.loadSave([]);
+        }
         map.draw();
         UI.renderStats();
         UI.updateLayerList();
@@ -431,13 +441,17 @@ const SAVE_UPLOAD = (() => {
     }
     // V1.6.0 任务完成同步（存档权威）：命中任务标志 → 注入任务板块 → 刷新任务行计数与绘制
     const qfNames = Object.keys(questFlags);
-    if (qfNames.length && window.QuestPanel) {
+    // 2026-11-04 修复：空集也必须注入。新开档/换档时存档里没有任何任务标志，旧代码的
+    // `qfNames.length &&` 会直接跳过注入，上一档的绿勾就原样留在屏幕上。
+    if (window.QuestPanel && window.QuestPanel.QuestDone) {
       window.QuestPanel.QuestDone.loadSave(questFlags);
       if (window._questRefreshRows) window._questRefreshRows();
       map.draw();
     }
     // V1.6.3 宝箱完成同步（存档权威）：已开宝箱像素点 → 注入存档完成集 → 重绘
-    if (chestPts.length && window.ChestSync) {
+    // 2026-11-04 修复：同上，新档一个宝箱都没开时也要 loadSave([])，
+    // 否则 localStorage 里 chestSaveDone 的旧档宝箱不会被清掉（新档显示一片已开宝箱）。
+    if (window.ChestSync) {
       window.ChestSync.loadSave(chestPts);
       map.draw();
     }
@@ -446,7 +460,7 @@ const SAVE_UPLOAD = (() => {
     const wfNames = Object.keys(weaponFlags);
     const pbNames = Object.keys(pbFlags);
     // V1.6.4：绿勾口径改图鉴登记（老大拍板：只有在图鉴里有的才打勾）；武器·获得计数仍用 IsGet
-    if (pbNames.length && window.EquipPanel && window.EquipPanel.EquipDone) {
+    if (window.EquipPanel && window.EquipPanel.EquipDone) {
       window.EquipPanel.EquipDone.loadSave(pbNames.map(n => n.replace('IsRegisteredPictureBook_Weapon_', 'Weapon_')));
       map.draw();
     }

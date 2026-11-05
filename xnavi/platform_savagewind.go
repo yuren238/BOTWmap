@@ -19,8 +19,11 @@
 package main
 
 import (
+	"encoding/binary"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -176,4 +179,152 @@ func savageWindExeDirGuess() string {
 func isSavageWindSavePath(p string) bool {
 	low := strings.ToLower(filepath.ToSlash(p))
 	return strings.Contains(low, "/save/save_0/")
+}
+
+// ---------------------------------------------------------------------------
+// 静态指针链（2026-11-06 实测标定，BOTW 1.9.0 + Savage Wind 0.4.1-alpha）
+//
+// Savage Wind recomp 把 guest main 模块固定映射在 0x7000000000（savagewind.log:
+// "loaded main at 7000000000 size 1e98000"），main 的 .data/.bss 因此位于
+// host 进程的固定地址，跨重启不变。其中一组全局指针由游戏自身维护，指向持有
+// 玩家坐标的对象——读链就是游戏自己的寻址方式：
+//   - 每帧重新解引用，无需锁定地址；
+//   - 死亡复活 / 传送 / 过图后游戏自己更新指针，天然跟随（实测死亡画面部分
+//     链短暂失效、复活后 4 秒内 18/18 全部恢复并指向新对象）；
+//   - 每 tick 36 次微量读，取代 3GB 全内存海选。
+//
+// 标定过程：以最新存档锚点为中心扫 guest RAM 收集坐标候选，差分走动前后定位
+// 真身镜像群（1851 个），再在 main 静态区（32MB）反向扫描指向镜像附近
+// [ptr, ptr+0x400] 的指针得到 18 条链，逐一验证走动跟随与死亡复活存活。
+//
+// 若游戏版本/recomp 布局变化导致链条失效（指针越界 / 坐标非法 / 无多数派），
+// readSavageWindChains 返回 0 票，上层自动落回原有动态扫描管道。
+// ---------------------------------------------------------------------------
+
+type swStaticChain struct {
+	static uintptr // main .data/.bss 中的全局指针槽地址（跨重启不变）
+	off    uintptr // 玩家坐标在该指针所指对象内的偏移
+}
+
+// savageWindChainPrimary 主链：+0x80 偏移与逆向确认的玩家对象布局一致
+// （0x40 步长环缓冲、位置+单位四元数），死亡全程未失效。
+const savageWindChainPrimary = 0
+
+var savageWindStaticChains = []swStaticChain{
+	{0x7001DC0A38, 0xF0},
+	{0x7001E0D040, 0x58},
+	{0x7001E0D0C8, 0x60},
+	{0x7001E12870, 0x270},
+	{0x7001E12878, 0x270},
+	{0x7001E13EC8, 0x80},
+	{0x7001E13ED0, 0x88},
+	{0x7001E15300, 0x218},
+	{0x7001E15308, 0x218},
+	{0x7001E327D8, 0x68},
+	{0x7001E328D8, 0x80},
+	{0x7001E396E8, 0xD8},
+	{0x7001E39700, 0xD8},
+	{0x7001E3F570, 0x1C0},
+	{0x7001E3F578, 0x1C8},
+	{0x7001E95488, 0x174},
+	{0x7001E954E8, 0x17C},
+	{0x7001E957A8, 0x2AC},
+}
+
+// readSavageWindChains 读取全部静态链并投票。
+// 主链有效时直接采用主链坐标（玩家本体），其余链做佐证计数；
+// 主链失效（死亡画面等过渡期）时对剩余链做 8m 桶多数派投票兜底。
+// 返回 (坐标, 有效票数, 主坐标地址)；票数 < 2 视为链不可用。
+func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
+	const guestLo = uintptr(0x7000000000)
+	const guestHi = uintptr(0x8000000000)
+
+	type hit struct {
+		pos  [3]float32
+		addr uintptr
+	}
+	hits := make([]hit, 0, len(savageWindStaticChains))
+	for _, ch := range savageWindStaticChains {
+		buf := readMem(h, ch.static, 8)
+		if len(buf) != 8 {
+			continue
+		}
+		ptr := uintptr(binary.LittleEndian.Uint64(buf))
+		if ptr < guestLo || ptr >= guestHi {
+			continue
+		}
+		cb := readMem(h, ptr+ch.off, 12)
+		if len(cb) != 12 {
+			continue
+		}
+		x := math.Float32frombits(binary.LittleEndian.Uint32(cb[0:]))
+		y := math.Float32frombits(binary.LittleEndian.Uint32(cb[4:]))
+		z := math.Float32frombits(binary.LittleEndian.Uint32(cb[8:]))
+		if !WorldCoordOK(x, y, z) {
+			continue
+		}
+		hits = append(hits, hit{[3]float32{x, y, z}, ptr + ch.off})
+	}
+	if len(hits) < 2 {
+		return [3]float32{}, 0, 0
+	}
+
+	// 主链优先：重读主链指针确定其坐标地址，与 hits 比对
+	primary := savageWindStaticChains[savageWindChainPrimary]
+	var primaryAddr uintptr
+	if pb := readMem(h, primary.static, 8); len(pb) == 8 {
+		if p := uintptr(binary.LittleEndian.Uint64(pb)); p >= guestLo && p < guestHi {
+			primaryAddr = p + primary.off
+		}
+	}
+	var primaryPos [3]float32
+	havePrimary := false
+	for _, hh := range hits {
+		if hh.addr == primaryAddr {
+			primaryPos = hh.pos
+			havePrimary = true
+			break
+		}
+	}
+	if havePrimary {
+		n := 0
+		for _, hh := range hits {
+			if dist3(hh.pos, primaryPos) < 100.0 {
+				n++
+			}
+		}
+		if n >= 2 {
+			return primaryPos, n, primaryAddr
+		}
+	}
+
+	// 多数派兜底：8m 桶聚类取最大簇，逐轴中位数
+	type key struct{ x, z int }
+	buckets := make(map[key][]hit)
+	for _, hh := range hits {
+		k := key{int(hh.pos[0] / 8), int(hh.pos[2] / 8)}
+		buckets[k] = append(buckets[k], hh)
+	}
+	var best []hit
+	for _, v := range buckets {
+		if len(v) > len(best) {
+			best = v
+		}
+	}
+	if len(best) < 2 {
+		return [3]float32{}, 0, 0
+	}
+	xs := make([]float32, 0, len(best))
+	ys := make([]float32, 0, len(best))
+	zs := make([]float32, 0, len(best))
+	for _, hh := range best {
+		xs = append(xs, hh.pos[0])
+		ys = append(ys, hh.pos[1])
+		zs = append(zs, hh.pos[2])
+	}
+	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
+	sort.Slice(ys, func(i, j int) bool { return ys[i] < ys[j] })
+	sort.Slice(zs, func(i, j int) bool { return zs[i] < zs[j] })
+	med := func(a []float32) float32 { return a[len(a)/2] }
+	return [3]float32{med(xs), med(ys), med(zs)}, len(best), best[0].addr
 }

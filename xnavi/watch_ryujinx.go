@@ -24,12 +24,13 @@ import (
 )
 
 type RyujinxTracker struct {
-	p        Platform // 平台能力（Ryujinx / Savage Wind 共用同一条扫描管道）
-	label    string   // 日志里的平台名
-	trackID  string   // 管道标识（日志/诊断用）
-	minRun   int      // Run 门禁门槛：Ryujinx=2（林克 RingBuffer 特征）；Savage Wind=0
-	rescanCh chan *RescanRequest
-	stopCh   chan struct{}
+	p          Platform // 平台能力（Ryujinx / Savage Wind 共用同一条扫描管道）
+	label      string   // 日志里的平台名
+	trackID    string   // 管道标识（日志/诊断用）
+	minRun     int      // Run 门禁门槛：Ryujinx=2（林克 RingBuffer 特征）；Savage Wind=0
+	useChains  bool     // Savage Wind：启用静态指针链快路径（platform_savagewind.go）
+	rescanCh   chan *RescanRequest
+	stopCh     chan struct{}
 }
 
 // P 打印平台名可替换的日志：格式串里的 "Ryujinx" 会按当前管道平台名替换，
@@ -58,12 +59,13 @@ func NewRyujinxTracker(p *ryujinxPlatform) *RyujinxTracker {
 // 它能把 guest RAM 里大量"物件摆放记录"（位置 + 物件 ID，无四元数）挡在外面。
 func NewSavageWindTracker(p Platform) *RyujinxTracker {
 	return &RyujinxTracker{
-		p:        p,
-		label:    "Savage Wind",
-		trackID:  "botw-savagewind",
-		minRun:   2,
-		rescanCh: make(chan *RescanRequest, 4),
-		stopCh:   make(chan struct{}),
+		p:         p,
+		label:     "Savage Wind",
+		trackID:   "botw-savagewind",
+		minRun:    2,
+		useChains: true,
+		rescanCh:  make(chan *RescanRequest, 4),
+		stopCh:    make(chan struct{}),
 	}
 }
 
@@ -353,6 +355,10 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 	lockSince := time.Time{}
 	lastUnverifiedHint := time.Time{}
 
+	// 静态指针链模式（Savage Wind）：链有效期间完全绕过扫描/仲裁状态机
+	chainMode := false
+	chainHoldLogged := false
+
 	reset := func(reason string) {
 		lockedAddr = 0
 		hasPrev = false
@@ -363,6 +369,8 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 		holdLogged = false
 		lockSince = time.Time{}
 		lastUnverifiedHint = time.Time{}
+		chainMode = false
+		chainHoldLogged = false
 		goUnlocked(reason)
 	}
 
@@ -532,6 +540,73 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 			}
 
 			h := t.p.Handle()
+
+			// 1.5 Savage Wind 静态指针链（快路径）：游戏原生寻址，免扫描免仲裁免走动确认。
+			// 链条由游戏自己维护（死亡/传送/过图自动更新指针），只在链整体失效时
+			// （加载过渡）保持坐标等待自愈；从未生效（布局不匹配）则落回下方启发式。
+			if t.useChains {
+				pos, votes, caddr := readSavageWindChains(h)
+				if votes >= 2 {
+					if !chainMode {
+						chainMode = true
+						t.P("  [chain] Savage Wind 静态指针链接管（%d/%d 条链一致 @0x%X）——游戏原生寻址，免扫描免仲裁，死亡/传送/过图自动跟随 / Static pointer chains engaged (%d chains agree @0x%X)\n",
+							votes, len(savageWindStaticChains), caddr, votes, caddr)
+						setLock(caddr, true, votes, "sw-chain")
+					}
+					chainHoldLogged = false
+					cur = pos
+
+					// 神庙本地尺度处理（与扫描路径同规则：庙内钉入口）
+					isShrine := isShrineScale(cur)
+					if shrineMode {
+						if !isShrine {
+							shrineMode = false
+							destName := formatDestName(cur)
+							t.P("  [shrine] 角色离开试炼场 -> 恢复大世界追踪 (%.1f, %.1f, %.1f) [%s] / Left shrine -> Resumed world tracking\n",
+								cur[0], cur[1], cur[2], destName)
+						} else {
+							publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, votes, "shrine")
+							continue
+						}
+					} else if isShrine && hasPrev && !isShrineScale(prev) && dist3(cur, prev) > 100.0 {
+						shrineMode = true
+						shrineEntrance = prev
+						destName := formatDestName(prev)
+						t.P("  [shrine] 角色进入试炼场 [%s] -> 锚定神庙入口 (%.1f, %.1f, %.1f) / Entered shrine [%s] -> Holding entrance\n",
+							destName, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], destName)
+						publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, votes, "shrine")
+						prev = cur
+						continue
+					}
+
+					if hasPrev {
+						delta := dist3(cur, prev)
+						if delta > 300.0 {
+							destName := formatDestName(cur)
+							t.P("  [warp] Savage Wind 角色大传送 (距离=%.1fm) -> %s (%.1f, %.1f, %.1f) [指针链零损耗接管] / Fast travel (dist=%.1fm) -> %s [Chain takeover]\n",
+								delta, destName, cur[0], cur[1], cur[2], delta, destName)
+						} else if delta > 150.0 {
+							// 单帧异常跳变（非传送）：保持，等下一 tick 链条自愈
+							publishState(true, prev[0], prev[1], prev[2], true, votes, "hold")
+							continue
+						}
+					}
+					publishState(true, cur[0], cur[1], cur[2], true, votes, "sw-chain")
+					prev = cur
+					hasPrev = true
+					continue
+				}
+				// 链整体失效：曾工作过 -> 加载/场景切换过渡，保持坐标等待自愈；
+				// 从未工作（不同游戏版本/recomp 布局）-> 落回原有动态扫描管道。
+				if chainMode && hasPrev {
+					if !chainHoldLogged {
+						t.P("  [chain] 静态链暂时全部失效（加载/场景切换）-> 保持坐标等待恢复 / Chains transiently invalid, holding position\n")
+						chainHoldLogged = true
+					}
+					publishState(true, prev[0], prev[1], prev[2], true, 0, "chain-hold")
+					continue
+				}
+			}
 
 			// 2. UNLOCKED：guest 内存动态扫描（带 Run>=2 门禁）
 			if lockedAddr == 0 {

@@ -34,7 +34,7 @@ export default {
     cemu: 'Cemu (Wii U)',
     ryujinx: 'Ryujinx (Switch)',
     eden: 'Eden (Switch)',
-    savagewind: 'Savage Wind (重编译)',
+    savagewind: 'Savage Wind (PC移植版)',
     pickTitle: '选择模拟器（改后需重启定位）'
   },
   buttons: {
@@ -120,11 +120,12 @@ export default {
   },
   about: {
     title: '关于 Xnavi',
-    desc: '三合一定位导航（BOTW × Cemu + Ryujinx + Eden）',
+    desc: '四平台定位导航：Cemu / Ryujinx / Eden + Savage Wind',
+    port: '深度适配 PC 移植版：Savage Wind Recomp（原生重编译，非模拟器）',
     version: '版本',
     map: '地图',
     github: 'GitHub',
-    note: '只读内存，不注入，不修改游戏。'
+    note: '只读内存，不注入，不修改游戏。PC 移植版走静态指针链直读：启动即定位，死亡/传送/过图自动跟随。'
   },
   update: {
     available: '有新版本可用',

@@ -4,13 +4,15 @@
 
 《塞尔达传说：旷野之息》简体中文多图层互动地图 · 收集进度追踪 · 实时角色导航
 
-![最新版本](https://img.shields.io/github/v/release/yalincc/BOTWmap?style=flat-square)　![在线版](https://img.shields.io/badge/在线版-botw.yalin.site-9a7b4f)
+![最新版本](https://img.shields.io/github/v/release/yalincc/BOTWmap?style=flat-square)　![在线版](https://img.shields.io/badge/在线版-botw.yalin.site-9a7b4f)　![PC 移植版](https://img.shields.io/badge/适配-PC%20移植版(Savage%20Wind)-d97706)
 
 ![地图界面](https://botw.yalin.site/media/readme-hero-v2.jpg)
 
+> 🎮 **本仓库重点适配 PC 移植版：Savage Wind Recomp**（《旷野之息》Switch 1.9.0 的原生静态重编译 PC 版）。不用模拟器、不用装 Cemu/Ryujinx，直接跑 PC 原生程序；xnavi 为此实现了**静态指针链直读**——启动即定位，死亡复活 / 传送 / 过图自动跟随，无需走动确认。
+
 ## 这是什么
 
-全中文互动地图：所有标注点官方简体中文命名；多图层同显、收集进度追踪、自定义标记；可选配 **xnavi** 在游戏进行时实时显示角色位置。纯静态页面，打开即用，无需服务器、无需安装。
+全中文互动地图：所有标注点官方简体中文命名；多图层同显、收集进度追踪、自定义标记；可选配 **xnavi** 在游戏进行时实时显示角色位置（模拟器三平台 + **PC 移植版 Savage Wind Recomp**）。纯静态页面，打开即用，无需服务器、无需安装。
 
 ## 直接使用
 
@@ -32,25 +34,29 @@
 3. 打开在线地图，右下角显示实时坐标
 4. 手机/平板跟随（可选）：与电脑同一 WiFi，点地图右下角 📱 扫码，手机浏览器打开即当第二屏（红点跟随 / 收集进度同步）；瓦片已内置在本仓库 `app/assets/tiles`（10096 张，z1~z7，68MB），断网可用
 
-- 四平台自动识别（Cemu / Ryujinx / Eden / Savage Wind），无需手选；仅读内存，不注入、不改游戏
+- 四平台自动识别（Cemu / Ryujinx / Eden / **Savage Wind PC 移植版**），无需手选；仅读内存，不注入、不改游戏
 - 存档联动：游戏保存后 ≤2 秒地图进度自动刷新
 - 下载与使用说明见 [Releases](https://github.com/yuren238/BOTWmap/releases)（本仓库适配版 tag 为 `v3.2.2-savagewind.*`；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）
 
-### 原生重编译版 Savage Wind Recomp
+### PC 移植版 Savage Wind Recomp（本仓库主打适配）
 
-本 fork 额外适配了 [Savage Wind Recomp](https://github.com/Revivedx/SavageWindRecomp)
-（《旷野之息》Switch 1.9.0 的静态重编译原生 PC 版）。地图与点位完全复用，差别只在定位程序：
+[Savage Wind Recomp](https://github.com/Revivedx/SavageWindRecomp) 是《旷野之息》Switch 1.9.0 的**静态重编译原生 PC 版**（static recompilation）：游戏代码被翻译成 PC 原生程序直接运行，**不是模拟器、不需要任何模拟器环境**。地图与点位完全复用，差别只在定位程序：
 
 ```bat
 xnavi.exe --emu=savagewind
 REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewind-save-dir="...\save"
 ```
 
-首次定位会锁定一个候选地址并提示「请在游戏内移动角色以完成验证」，走动 3~5 步即完全锁定。
+针对 PC 移植版专门做了三件事：
+
+1. **静态指针链直读**：recomp 把 guest main 固定映射在 `0x7000000000`，其中一组全局指针由游戏自身维护并指向玩家对象。xnavi 标定出 18 条链，**启动即定位、免扫描免走动确认**（`verified` 启动即真），每 tick 仅 36 次微量读取代 3GB 全内存扫描
+2. **死亡 / 传送 / 过图天然跟随**：指针由游戏自己每帧更新，红点不会钉死；实测死亡画面部分链清零、复活 4 秒内 18/18 恢复
+3. **版本指纹护栏**：游戏或 recomp 更新后若 guest 布局变化，三层护栏（模块基址 / 指针域 / 结构指纹）让链**显式失效并自动落回动态扫描**，绝不静默给错坐标
+
 适配细节、实测数据与已知限制见 [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md)。
 
-开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.2`）
-（`Xnavi.exe` GUI + `xnavi-core.exe` 定位核心，解压后两个 exe 放同一目录，平台下拉选 Savage Wind）。
+开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.6`）
+（`Xnavi.exe` GUI + `xnavi-core.exe` 定位核心，解压后两个 exe 放同一目录，平台下拉选 **Savage Wind (PC移植版)**）。
 
 ## 核心功能
 
@@ -67,6 +73,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 | 装备图鉴 | 武器 90 + 防具 31，收录来源与获取点，可逐个定位 |
 | 存档修改器 | 网页端改存档：卢比 / 心 / 耐力 / 克洛格、装备耐久与封印属性、材料与料理数量；另附 Switch ↔ Wii U 存档互转（测试中）。全程离线，不上传、不写盘 |
 | 常用工具 | 距离测量 / 自定义标记 / 分享链接 / 坐标读数 / 龙飞行轨迹 |
+| PC 移植版适配 | Savage Wind Recomp 专属定位：静态指针链直读，启动即定位、死亡/传送自动跟随；另有 Cemu / Ryujinx / Eden 三平台模拟器支持 |
 
 ## 收录内容
 
@@ -80,7 +87,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 
 ## 版本
 
-网页版 **v1.7.5**；导航程序 xnavi 版本独立（Latest：`xnavi-v3.2.2`，见 [Releases](https://github.com/yalincc/BOTWmap/releases)）。更新明细见 [CHANGELOG.md](CHANGELOG.md)。
+网页版 **v1.7.5**；导航程序 xnavi 版本独立（本适配版 Latest：**`v3.2.2-savagewind.6`**，见 [Releases](https://github.com/yuren238/BOTWmap/releases)；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）。更新明细见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 免责声明
 

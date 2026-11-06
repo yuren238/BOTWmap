@@ -34,7 +34,7 @@ export default {
     cemu: 'Cemu (Wii U)',
     ryujinx: 'Ryujinx (Switch)',
     eden: 'Eden (Switch)',
-    savagewind: 'Savage Wind (Recomp)',
+    savagewind: 'Savage Wind (PC Port)',
     pickTitle: 'Select emulator (restart locating to apply)'
   },
   buttons: {
@@ -120,11 +120,12 @@ export default {
   },
   about: {
     title: 'About Xnavi',
-    desc: 'Unified 3-in-1 Tracker (BOTW × Cemu + Ryujinx + Eden)',
+    desc: 'Four-platform tracker: Cemu / Ryujinx / Eden + Savage Wind',
+    port: 'Deep support for the native PC port: Savage Wind Recomp (static recompilation, not an emulator)',
     version: 'Version',
     map: 'Map',
     github: 'GitHub',
-    note: 'Read-only memory tracking. No injection. Safe to use.'
+    note: 'Read-only memory tracking. No injection. Safe to use. The PC port is tracked via static pointer chains: instant lock on start, follows death/warp/scene changes automatically.'
   },
   update: {
     available: 'Update Available',

@@ -5,6 +5,7 @@
       <button class="text-slate-500 hover:text-white text-xs" @click="$emit('close')">✕</button>
     </div>
     <div class="text-slate-300">{{ t('about.desc') }}</div>
+    <div class="text-amber-300/90 bg-amber-400/10 border border-amber-400/20 rounded px-2 py-1 leading-relaxed">{{ t('about.port') }}</div>
     <div class="text-slate-400 font-mono">{{ t('about.version') }}：<span class="text-sky-400 font-bold">{{ ver }}</span></div>
     <div class="text-slate-400 font-mono">{{ t('about.map') }}：<a href="https://botw.yalin.site/" target="_blank" class="text-blue-400 hover:underline">botw.yalin.site</a></div>
     <div class="text-slate-400 font-mono">{{ t('about.github') }}：<a href="https://github.com/yalincc/BOTWmap" target="_blank" class="text-blue-400 hover:underline">yalincc/BOTWmap</a></div>

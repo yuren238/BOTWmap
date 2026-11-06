@@ -8,6 +8,8 @@ An interactive map of *The Legend of Zelda: Breath of the Wild* in Simplified Ch
 
 ![Map interface](https://botw.yalin.site/media/readme-hero-en.jpg)
 
+> 🎮 **This fork focuses on the native PC port: Savage Wind Recomp** — a static recompilation of Breath of the Wild that runs as a native PC program, no emulator required. xnavi reads the game's own pointer chains for it: position locked at startup, follows death / fast travel / scene changes automatically.
+
 ## Overview
 
 Every marker on the map is labeled with the official Simplified Chinese names. Toggle any combination of layers, track your collection progress, drop custom markers — and optionally watch your in-game position in real time with **xnavi**. It's a fully static page: no server, no install, just open and play.
@@ -23,7 +25,7 @@ Progress, layer selections and custom markers are saved automatically in your br
 
 ## Real-Time Navigation (Optional)
 
-Want to watch your character walk across the map in real time? Pair the map with **xnavi** — one tool for Cemu, Ryujinx, and Eden:
+Want to watch your character walk across the map in real time? Pair the map with **xnavi** — one tool for Cemu, Ryujinx, Eden, and the **native PC port (Savage Wind Recomp)**:
 
 ![xnavi locating UI](https://botw.yalin.site/media/xnavi-gui-hero-en.jpg)
 
@@ -32,9 +34,28 @@ Want to watch your character walk across the map in real time? Pair the map with
 3. Open the online map — your position appears live at the bottom-right corner.
 4. Phone/tablet follow (optional): requires the local offline map — download `botwmap-vX.Y.Z.zip` (tags prefixed `botwmap-vX.Y.Z` on Releases), unzip it next to `xnavi.exe` (merge the two packages), then scan the QR code in the GUI; see the README inside the xnavi package for details.
 
-- Auto-detects all three emulators; reads memory only — no injection, no game modification
+- Auto-detects all three emulators *plus* the native PC port; reads memory only — no injection, no game modification
 - Save sync: your progress refreshes on the map within 2 seconds of saving in-game
 - Download: [Releases](https://github.com/yalincc/BOTWmap/releases) (tags prefixed `xnavi-vX.Y.Z`)
+
+### Native PC Port — Savage Wind Recomp (primary target of this fork)
+
+[Savage Wind Recomp](https://github.com/Revivedx/SavageWindRecomp) is a **static recompilation** of Breath of the Wild (Switch 1.9.0) that runs as a native PC program — no emulator involved. The map and all markers are shared; only the tracker differs:
+
+```bat
+xnavi.exe --emu=savagewind
+REM Saves are read from <game dir>\save\save_0 by default; override with --savagewind-save-dir="...\save"
+```
+
+What this fork adds for the PC port:
+
+1. **Static pointer-chain reads** — the recomp maps the guest `main` module at a fixed base (`0x7000000000`), and the game itself maintains a set of global pointers to the player object. xnavi calibrates 18 chains and reads them directly: **position locked at startup, no memory scan, no "walk a few steps" confirmation**, replacing a 3 GB full-memory scan with 36 tiny reads per tick
+2. **Death / fast-travel / scene changes followed natively** — the pointers are updated by the game every frame, so the dot never freezes; in testing, part of the chains cleared on the death screen and all 18/18 recovered within 4 s after respawn
+3. **Version-fingerprint guardrails** — if a game or recomp update changes the guest layout, three layers (module base / pointer domain / structure fingerprint) make the chains **fail loudly and fall back to dynamic scanning** instead of silently reporting a wrong position
+
+Details, measurements and known limitations: [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md).
+
+Ready-to-run Windows package: [**latest Release**](https://github.com/yuren238/BOTWmap/releases/latest) (currently `v3.2.2-savagewind.6`) — unzip `Xnavi.exe` + `xnavi-core.exe` into one folder and pick **Savage Wind (PC Port)** in the platform dropdown.
 
 ## Features
 
@@ -64,7 +85,7 @@ Want to watch your character walk across the map in real time? Pair the map with
 
 ## Version
 
-Web app **v1.7.5** · xnavi (independent versioning) **v3.2.2** — see [Releases](https://github.com/yalincc/BOTWmap/releases) and [CHANGELOG.md](CHANGELOG.md).
+Web app **v1.7.5** · xnavi (independent versioning) **v3.2.2** — PC-port build **`v3.2.2-savagewind.6`**, see [Releases](https://github.com/yuren238/BOTWmap/releases) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 

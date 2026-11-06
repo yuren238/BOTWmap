@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -227,6 +228,9 @@ func scanAll(h uintptr, blocks []MemBlock, refs [][3]float32, window float32, hi
 			off += n
 		}
 	}
+	// totalHits 原子计数已入库命中数。原实现 worker 在无锁状态下读 len(*hits)，
+	// 与其它 worker 持 mu 的 append 构成数据竞争（-race 必报）；改用原子计数判定熔断。
+	var totalHits int64
 	workers := runtime.NumCPU()
 	if workers > 16 {
 		workers = 16
@@ -241,7 +245,7 @@ func scanAll(h uintptr, blocks []MemBlock, refs [][3]float32, window float32, hi
 			var local []Hit
 			dst := make([]float32, chunkSize/4) // 大端解码复用缓冲
 			for j := range ch {
-				if len(*hits) > hitCap {
+				if atomic.LoadInt64(&totalHits) > int64(hitCap) {
 					return
 				}
 				buf := readMem(h, j.Base, int(j.Size))
@@ -254,6 +258,7 @@ func scanAll(h uintptr, blocks []MemBlock, refs [][3]float32, window float32, hi
 				mu.Lock()
 				*hits = append(*hits, local...)
 				mu.Unlock()
+				atomic.AddInt64(&totalHits, int64(len(local)))
 			}
 		}()
 	}

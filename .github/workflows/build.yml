@@ -27,6 +27,22 @@ jobs:
         with:
           node-version: '22'
 
+      # 0) 静态检查 + 单测（核心包）。fail-fast：编译错误/明显 bug 不再等到打包才炸
+      - name: Vet (core)
+        working-directory: xnavi
+        run: go vet ./...
+
+      - name: Test (core)
+        working-directory: xnavi
+        run: go test ./...
+
+      # 竞态检测（CI runner 自带 mingw gcc，本机没有）：验证句柄/扫描数据竞争修复
+      - name: Test (core, race)
+        working-directory: xnavi
+        env:
+          CGO_ENABLED: 1
+        run: go test -race ./...
+
       # 1) 命令行核心：GUI 启动时调用同目录的 xnavi-core.exe
       - name: Build core (xnavi-core.exe)
         working-directory: xnavi

@@ -25,15 +25,25 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // guest 地址空间下界：Switch 用户态地址从 0x7000000000 起（日志实测模块基址）。
 // 用它把 host 侧的 DLL/堆分配挡在外面，避免把宿主内存当游戏内存扫。
 const savageWindGuestBase = uintptr(0x7000000000)
 
+// h/pid 为共享单例状态（tracker 主循环与平台探测/看门狗 goroutine 并发访问），
+// 读写必须持锁：否则可能双重 closeHandle / 半开句柄 / 撕裂写。
 type savageWindPlatform struct {
+	mu  sync.Mutex
 	h   uintptr
 	pid uint32
+}
+
+func (p *savageWindPlatform) snapshot() (uintptr, uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h, p.pid
 }
 
 // savageWindSaveDirOverride 由 --savagewind-save-dir= 指定（手动指定最高优先级）。
@@ -56,6 +66,8 @@ func findSavageWindPid() uint32 {
 }
 
 func (p *savageWindPlatform) Attach() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	pid := findSavageWindPid()
 	if pid == 0 {
 		if p.h != 0 {
@@ -83,14 +95,23 @@ func (p *savageWindPlatform) Attach() bool {
 	return true
 }
 
-func (p *savageWindPlatform) Handle() uintptr   { return p.h }
-func (p *savageWindPlatform) PID() uint32       { return p.pid }
+func (p *savageWindPlatform) Handle() uintptr {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h
+}
+func (p *savageWindPlatform) PID() uint32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
+}
 func (p *savageWindPlatform) LittleEndian() bool { return true }
 
 // Blocks 返回 guest 地址空间内已提交可读写、且不小于 minMB 的区域。
 // 实测：3121MB（guest RAM）+ 数个 200~360MB（纹理/资源堆）都落在 0x7000000000+。
 func (p *savageWindPlatform) Blocks(minMB float64) []MemBlock {
-	return savageWindRWBlocks(p.h, minMB)
+	h, _ := p.snapshot()
+	return savageWindRWBlocks(h, minMB)
 }
 
 // LargestBlock 最大 guest RW 块（known 偏移锚点）。
@@ -113,10 +134,11 @@ func (p *savageWindPlatform) SaveRoots() []string {
 	}
 	var roots []string
 	exe := ""
-	if p.h != 0 {
-		exe = processExePath(p.h)
-	} else if p.pid != 0 {
-		exe = processExePathByPID(p.pid)
+	h, pid := p.snapshot()
+	if h != 0 {
+		exe = processExePath(h)
+	} else if pid != 0 {
+		exe = processExePathByPID(pid)
 	}
 	if exe != "" {
 		dir := filepath.Dir(exe)

@@ -77,6 +77,7 @@ func (t *CemuTracker) Start(ctx context.Context) {
 	shrineMode := false
 	var shrineEntrance [3]float32
 	holdLogged := false
+	shrineAnchorWarned := false
 	lastScanLogAt := time.Time{}
 
 	reset := func(reason string) {
@@ -205,16 +206,25 @@ func (t *CemuTracker) Start(ctx context.Context) {
 				// 还在神庙内：死死钉在神庙入口
 				publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, 1, "shrine")
 				continue
-			} else if isShrineLocal && (!hasPrev || !isShrineScale(prev)) && dist3(cur, prev) > 100.0 {
-				// 进庙：世界尺度 → 神庙本地尺度，红点钉在进入前的门口 prev
-				shrineMode = true
-				shrineEntrance = prev
-				destName := formatDestName(prev)
-				fmt.Printf("  [shrine] Cemu 角色进入试炼场 [%s] -> 锚定神庙入口 (%.1f, %.1f, %.1f) / Entered shrine [%s] -> Holding entrance\n",
-					destName, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], destName)
-				publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, 1, "shrine")
+		} else if isShrineLocal && dist3(cur, prev) > 100.0 {
+			if !hasPrev || isShrineScale(prev) {
+				// 拿不到合法入口锚点（启动/重扫时人已在庙内）：prev 可能还是零值 (0,0,0)，
+				// 绝不能把它当门口，否则红点钉死在地图原点的海里。暂停发布，出庙后自愈。
+				if !shrineAnchorWarned {
+					shrineAnchorWarned = true
+					fmt.Printf("  [shrine] Cemu 检测到神庙本地坐标但无合法入口锚点 -> 暂停发布（不钉原点） / Shrine-local coords without entrance anchor -> pausing publish (no origin pin)\n")
+				}
 				continue
 			}
+			// 进庙：世界尺度 → 神庙本地尺度，红点钉在进入前的门口 prev
+			shrineMode = true
+			shrineEntrance = prev
+			destName := formatDestName(prev)
+			fmt.Printf("  [shrine] Cemu 角色进入试炼场 [%s] -> 锚定神庙入口 (%.1f, %.1f, %.1f) / Entered shrine [%s] -> Holding entrance\n",
+				destName, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], destName)
+			publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, 1, "shrine")
+			continue
+		}
 
 			delta := dist3(cur, prev)
 

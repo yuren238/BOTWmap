@@ -71,9 +71,18 @@ func setEdenSaveDirOverride(d string) {
 	edenSaveDirOverride = d
 }
 
+// h/pid 为共享单例状态（tracker 主循环与平台探测/看门狗 goroutine 并发访问），
+// 读写必须持锁：否则可能双重 closeHandle / 半开句柄 / 撕裂写。
 type edenPlatform struct {
+	mu  sync.Mutex
 	h   uintptr
 	pid uint32
+}
+
+func (p *edenPlatform) snapshot() (uintptr, uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h, p.pid
 }
 
 func init() {
@@ -83,6 +92,8 @@ func init() {
 func (p *edenPlatform) Name() string { return "Eden" }
 
 func (p *edenPlatform) Attach() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	pid := edenFindPid()
 	if pid == 0 {
 		if p.h != 0 {
@@ -110,18 +121,28 @@ func (p *edenPlatform) Attach() bool {
 	return true
 }
 
-func (p *edenPlatform) Handle() uintptr     { return p.h }
-func (p *edenPlatform) PID() uint32        { return p.pid }
+func (p *edenPlatform) Handle() uintptr {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h
+}
+func (p *edenPlatform) PID() uint32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
+}
 func (p *edenPlatform) LittleEndian() bool { return true }
 
 // Blocks 返回 User Heap 内的 RW 块（2.65GB 范围）。
 func (p *edenPlatform) Blocks(minMB float64) []MemBlock {
-	return edenHeapBlocks(p.h, minMB)
+	h, _ := p.snapshot()
+	return edenHeapBlocks(h, minMB)
 }
 
 // LargestBlock 返回最大的 DRAM 块基址与大小。
 func (p *edenPlatform) LargestBlock(minMB float64) (uintptr, uintptr) {
-	arenaLow, size, ok := findEdenDram(p.h)
+	h, _ := p.snapshot()
+	arenaLow, size, ok := findEdenDram(h)
 	if !ok {
 		return 0, 0
 	}

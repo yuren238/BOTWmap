@@ -272,8 +272,15 @@ func fileVersion(path string) string {
 		return ""
 	}
 	// VS_FIXEDFILEINFO: dwFileVersionMS (offset 8), dwFileVersionLS (offset 12)
-	ms := *(*uint32)(unsafe.Pointer(pp + 8))
-	ls := *(*uint32)(unsafe.Pointer(pp + 12))
+	// pp 指向 buf 内部：换算成 buf 偏移后直接按字节读，避免 uintptr→unsafe.Pointer
+	// 转换（go vet unsafeptr 告警，且算术产生的悬垂指针在 GC 下不安全）。
+	bufStart := uintptr(unsafe.Pointer(&buf[0]))
+	if pp < bufStart || pp+16 > bufStart+uintptr(len(buf)) {
+		return ""
+	}
+	off := pp - bufStart
+	ms := uint32(buf[off+8]) | uint32(buf[off+9])<<8 | uint32(buf[off+10])<<16 | uint32(buf[off+11])<<24
+	ls := uint32(buf[off+12]) | uint32(buf[off+13])<<8 | uint32(buf[off+14])<<16 | uint32(buf[off+15])<<24
 	return fmt.Sprintf("%d.%d.%d.%d", uint16(ms>>16), uint16(ms), uint16(ls>>16), uint16(ls))
 }
 

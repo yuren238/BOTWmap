@@ -352,6 +352,7 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 	lastScanAt := time.Time{}
 	scanCooldown := time.Second
 	holdLogged := false
+	shrineAnchorWarned := false
 	lockSince := time.Time{}
 	lastUnverifiedHint := time.Time{}
 
@@ -769,16 +770,25 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 				// 还在神庙内：死锁保护，红点死死钉在神庙入口！
 				publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, 0, "shrine")
 				continue
-			} else if isShrine && (!hasPrev || !isShrineScale(prev)) && dist3(cur, prev) > 100.0 {
-				// 进庙：世界尺度 → 神庙本地尺度，红点钉在进入前的门口 prev
-				shrineMode = true
-				shrineEntrance = prev
-				destName := formatDestName(prev)
-				t.P("  [shrine] Ryujinx 角色进入试炼场 [%s] -> 锚定神庙入口 (%.1f, %.1f, %.1f) / Entered shrine [%s] -> Holding entrance\n",
-					destName, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], destName)
-				publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, 0, "shrine")
+		} else if isShrine && dist3(cur, prev) > 100.0 {
+			if !hasPrev || isShrineScale(prev) {
+				// 拿不到合法入口锚点（启动/重扫时人已在庙内）：prev 可能还是零值 (0,0,0)，
+				// 绝不能把它当门口，否则红点钉死在地图原点的海里。暂停发布，出庙后自愈。
+				if !shrineAnchorWarned {
+					shrineAnchorWarned = true
+					t.P("  [shrine] Ryujinx 检测到神庙本地坐标但无合法入口锚点 -> 暂停发布（不钉原点） / Shrine-local coords without entrance anchor -> pausing publish (no origin pin)\n")
+				}
 				continue
 			}
+			// 进庙：世界尺度 → 神庙本地尺度，红点钉在进入前的门口 prev
+			shrineMode = true
+			shrineEntrance = prev
+			destName := formatDestName(prev)
+			t.P("  [shrine] Ryujinx 角色进入试炼场 [%s] -> 锚定神庙入口 (%.1f, %.1f, %.1f) / Entered shrine [%s] -> Holding entrance\n",
+				destName, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], destName)
+			publishState(true, shrineEntrance[0], shrineEntrance[1], shrineEntrance[2], true, 0, "shrine")
+			continue
+		}
 
 			// 多候选走动仲裁（防驿站等多 NPC 场景误锁静止 NPC）
 			if !verified && len(cands) > 1 {

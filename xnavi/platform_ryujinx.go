@@ -11,11 +11,23 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sync"
 )
 
+// ryujinxPlatform 的 h/pid 是共享单例状态：tracker 主循环（Attach/Handle）与
+// 平台探测/看门狗 goroutine（probePlatform/platformWithGame）会并发访问，
+// 必须持锁，否则可能出现双重 closeHandle / 半开句柄 / 撕裂写。
 type ryujinxPlatform struct {
+	mu  sync.Mutex
 	h   uintptr
 	pid uint32
+}
+
+// snapshot 原子取 (h, pid)；读侧拿到过期句柄由 vqRetry 等既有失败路径自愈。
+func (p *ryujinxPlatform) snapshot() (uintptr, uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h, p.pid
 }
 
 func init() {
@@ -25,6 +37,8 @@ func init() {
 func (p *ryujinxPlatform) Name() string { return "Ryujinx" }
 
 func (p *ryujinxPlatform) Attach() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	pid := findPid("ryujinx")
 	if pid == 0 {
 		if p.h != 0 {
@@ -52,18 +66,28 @@ func (p *ryujinxPlatform) Attach() bool {
 	return true
 }
 
-func (p *ryujinxPlatform) Handle() uintptr { return p.h }
-func (p *ryujinxPlatform) PID() uint32     { return p.pid }
+func (p *ryujinxPlatform) Handle() uintptr {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h
+}
+func (p *ryujinxPlatform) PID() uint32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
+}
 func (p *ryujinxPlatform) LittleEndian() bool { return true }
 
 // Blocks guest DRAM：MEM_MAPPED 提交区（剔除 32GB 高的镜像块）。
 func (p *ryujinxPlatform) Blocks(minMB float64) []MemBlock {
-	return ryuGuestBlocks(p.h, minMB)
+	h, _ := p.snapshot()
+	return ryuGuestBlocks(h, minMB)
 }
 
 // LargestBlock 最大 guest DRAM（known 偏移重定位锚点）。
 func (p *ryujinxPlatform) LargestBlock(minMB float64) (uintptr, uintptr) {
-	return ryuLargestGuestBlock(p.h, minMB)
+	h, _ := p.snapshot()
+	return ryuLargestGuestBlock(h, minMB)
 }
 
 // ryujinxSaveDirOverride 由 --ryujinx-save-dir= 指定（GUI 设置"Ryujinx 存档路径"），
@@ -87,10 +111,11 @@ func (p *ryujinxPlatform) SaveRoots() []string {
 
 	// P1: 进程自省（提取 ryuDir，检查 ryuDir/portable/bis/user/save）
 	var ryuExe string
-	if p.h != 0 {
-		ryuExe = processExePath(p.h)
-	} else if p.pid != 0 {
-		ryuExe = processExePathByPID(p.pid)
+	h, pid := p.snapshot()
+	if h != 0 {
+		ryuExe = processExePath(h)
+	} else if pid != 0 {
+		ryuExe = processExePathByPID(pid)
 	}
 	if ryuExe != "" {
 		ryuDir := filepath.Dir(ryuExe)

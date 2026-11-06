@@ -21,11 +21,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
+// h/pid 为共享单例状态（tracker 主循环与平台探测/看门狗 goroutine 并发访问），
+// 读写必须持锁：否则可能双重 closeHandle / 半开句柄 / 撕裂写。
 type cemuPlatform struct {
+	mu  sync.Mutex
 	h   uintptr
 	pid uint32
+}
+
+func (p *cemuPlatform) snapshot() (uintptr, uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h, p.pid
 }
 
 // cemuSaveDirOverride 由 --cemu-save-dir= 指定（GUI 设置"Cemu 存档路径"），
@@ -77,6 +87,8 @@ func findLiveCemu() (uint32, uintptr) {
 }
 
 func (p *cemuPlatform) Attach() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	pid, h := findLiveCemu()
 	if pid == 0 || h == 0 {
 		if p.h != 0 {
@@ -96,18 +108,28 @@ func (p *cemuPlatform) Attach() bool {
 	return true
 }
 
-func (p *cemuPlatform) Handle() uintptr { return p.h }
-func (p *cemuPlatform) PID() uint32     { return p.pid }
+func (p *cemuPlatform) Handle() uintptr {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.h
+}
+func (p *cemuPlatform) PID() uint32 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
+}
 func (p *cemuPlatform) LittleEndian() bool { return false }
 
 // Blocks 已提交可读写连续区域（不限 Type，靠大小/位置交叉校验）。
 func (p *cemuPlatform) Blocks(minMB float64) []MemBlock {
-	return cemuRWBlocks(p.h, minMB)
+	h, _ := p.snapshot()
+	return cemuRWBlocks(h, minMB)
 }
 
 // LargestBlock 最大已提交 RW 块（known 偏移锚点，每次必可找到）。
 func (p *cemuPlatform) LargestBlock(minMB float64) (uintptr, uintptr) {
-	return cemuLargestRWBlock(p.h)
+	h, _ := p.snapshot()
+	return cemuLargestRWBlock(h)
 }
 
 // parseCemuMlcPath 从 Cemu 的 settings.xml 中提取 <mlc_path> 路径。

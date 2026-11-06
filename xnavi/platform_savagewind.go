@@ -20,6 +20,7 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -253,13 +254,109 @@ var savageWindStaticChains = []swStaticChain{
 	{0x7001E957A8, 0x2AC},
 }
 
+// ---------------------------------------------------------------------------
+// 指针链护栏（版本/布局指纹）
+//
+// 链按 BOTW 1.9.0 + Savage Wind 0.4.1-alpha.4 标定。游戏/recomp 更新后若 guest
+// 布局变化，静态槽最危险的不是失效（0 票自动落回海选），而是仍解出"看起来
+// 合法"的坐标——例如槽位被复用后指向同结构体类型的 NPC，投票照样过半，
+// 红点静默指错。三层护栏把静默错位变成显式失效（该链弃权）：
+//   G1 模块指纹：main 必须仍按标定布局映射在 0x7000000000（已提交、可执行）
+//   G2 指针域：  链解出的对象指针必须落在 main 模块之外（活对象在 guest 堆；
+//                解出模块内地址 = .data 布局已变的强信号）
+//   G3 结构指纹：对象内 [坐标, 坐标+0x30) 必须是"合法三元组 + 正交旋转矩阵"
+//                （与标定时结构扫描的门禁同款，见 locate.go rotOKF）
+// G1 失败 = 布局已变，全链直接失效（0 票）落回动态扫描管道。
+// ---------------------------------------------------------------------------
+
+const (
+	swModuleBase = uintptr(0x7000000000)  // guest main 固定映射基址
+	swModuleSize = uintptr(0x1e98000)     // savagewind.log: "loaded main at 7000000000 size 1e98000"
+	swGuestHi    = uintptr(0x8000000000)  // Switch 用户态上界
+)
+
+// savageWindChainCalVersion 链标定针对的游戏版本（仅用于日志指纹比对）。
+const savageWindChainCalVersion = "0.4.1-alpha.4"
+
+var (
+	swModuleMu     sync.Mutex
+	swModuleHandle uintptr
+	swModuleOKVal  bool
+)
+
+// savageWindModuleOK G1 模块指纹：main 是否仍映射在标定基址（按句柄缓存，每 tick 至多一次 VQ）。
+// 注意：PE 映像的首区是只读头页（PAGE_READONLY，无执行位），因此基址区只查
+// "已提交"，可执行位改查 .text 区（基址+0x10000）；保护位同时接受 writecopy
+// （文件映射映像的典型形态）。任一检查失败都把实际观察值打进日志，便于区分
+// "布局真变了"和"检查写错了"。
+func savageWindModuleOK(h uintptr) bool {
+	swModuleMu.Lock()
+	defer swModuleMu.Unlock()
+	if swModuleHandle == h {
+		return swModuleOKVal
+	}
+	ok := false
+	why := "通过"
+	var mbi MemoryBasicInformation
+	switch {
+	case !vqRetry(h, swModuleBase, &mbi):
+		why = "0x7000000000 查询失败（地址未映射）"
+	case mbi.State != memCommit:
+		why = fmt.Sprintf("基址区未提交 State=0x%X", mbi.State)
+	case mbi.BaseAddress != swModuleBase:
+		why = fmt.Sprintf("基址区起点偏移 Base=0x%X", mbi.BaseAddress)
+	case !swExecRegionOK(h):
+		why = fmt.Sprintf("基址区 Protect=0x%X 且 +0x10000 处无可执行区", mbi.Protect&0xFF)
+	default:
+		ok = true
+	}
+	swModuleHandle, swModuleOKVal = h, ok
+	if !ok {
+		fmt.Printf("  [chain] 指纹护栏 G1：guest main 检查未过（%s）-> 静态链全链失效，落回动态扫描 / Module fingerprint mismatch (%s), chains disabled\n", why, why)
+	}
+	return ok
+}
+
+// swExecRegionOK .text 区（基址+0x10000，跳过 PE 头页）是否可执行提交区。
+func swExecRegionOK(h uintptr) bool {
+	var mbi MemoryBasicInformation
+	if !vqRetry(h, swModuleBase+0x10000, &mbi) || mbi.State != memCommit {
+		return false
+	}
+	p := mbi.Protect & 0xFF
+	return p == 0x20 || p == 0x40 || p == 0x80 // EXECUTE_READ / EXECUTE_READWRITE / EXECUTE_WRITECOPY
+}
+
+// swChainSampleOK G3 结构指纹：48 字节对象样本应为"合法坐标三元组 + 正交旋转矩阵"。
+func swChainSampleOK(cb []byte) ([3]float32, bool) {
+	if len(cb) < 48 {
+		return [3]float32{}, false
+	}
+	x := math.Float32frombits(binary.LittleEndian.Uint32(cb[0:]))
+	y := math.Float32frombits(binary.LittleEndian.Uint32(cb[4:]))
+	z := math.Float32frombits(binary.LittleEndian.Uint32(cb[8:]))
+	if !WorldCoordOK(x, y, z) {
+		return [3]float32{}, false
+	}
+	var m [9]float32
+	for i := 0; i < 9; i++ {
+		m[i] = math.Float32frombits(binary.LittleEndian.Uint32(cb[12+i*4:]))
+	}
+	if !rotOKF(m[:]) {
+		return [3]float32{}, false
+	}
+	return [3]float32{x, y, z}, true
+}
+
 // readSavageWindChains 读取全部静态链并投票。
 // 主链有效时直接采用主链坐标（玩家本体），其余链做佐证计数；
 // 主链失效（死亡画面等过渡期）时对剩余链做 8m 桶多数派投票兜底。
 // 返回 (坐标, 有效票数, 主坐标地址)；票数 < 2 视为链不可用。
 func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
-	const guestLo = uintptr(0x7000000000)
-	const guestHi = uintptr(0x8000000000)
+	// G1 模块指纹：布局已变时全链直接失效
+	if !savageWindModuleOK(h) {
+		return [3]float32{}, 0, 0
+	}
 
 	type hit struct {
 		pos  [3]float32
@@ -272,20 +369,19 @@ func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
 			continue
 		}
 		ptr := uintptr(binary.LittleEndian.Uint64(buf))
-		if ptr < guestLo || ptr >= guestHi {
+		// G2 指针域：活对象在 guest 堆，解出模块内地址 = 布局已变
+		if ptr < swModuleBase+swModuleSize || ptr >= swGuestHi {
 			continue
 		}
-		cb := readMem(h, ptr+ch.off, 12)
-		if len(cb) != 12 {
+		cb := readMem(h, ptr+ch.off, 48)
+		if len(cb) != 48 {
 			continue
 		}
-		x := math.Float32frombits(binary.LittleEndian.Uint32(cb[0:]))
-		y := math.Float32frombits(binary.LittleEndian.Uint32(cb[4:]))
-		z := math.Float32frombits(binary.LittleEndian.Uint32(cb[8:]))
-		if !WorldCoordOK(x, y, z) {
+		pos, ok := swChainSampleOK(cb)
+		if !ok {
 			continue
 		}
-		hits = append(hits, hit{[3]float32{x, y, z}, ptr + ch.off})
+		hits = append(hits, hit{pos, ptr + ch.off})
 	}
 	if len(hits) < 2 {
 		return [3]float32{}, 0, 0
@@ -295,7 +391,7 @@ func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
 	primary := savageWindStaticChains[savageWindChainPrimary]
 	var primaryAddr uintptr
 	if pb := readMem(h, primary.static, 8); len(pb) == 8 {
-		if p := uintptr(binary.LittleEndian.Uint64(pb)); p >= guestLo && p < guestHi {
+		if p := uintptr(binary.LittleEndian.Uint64(pb)); p >= swModuleBase+swModuleSize && p < swGuestHi {
 			primaryAddr = p + primary.off
 		}
 	}

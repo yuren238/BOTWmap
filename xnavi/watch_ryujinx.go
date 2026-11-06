@@ -552,6 +552,10 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 						chainMode = true
 						t.P("  [chain] Savage Wind 静态指针链接管（%d/%d 条链一致 @0x%X）——游戏原生寻址，免扫描免仲裁，死亡/传送/过图自动跟随 / Static pointer chains engaged (%d chains agree @0x%X)\n",
 							votes, len(savageWindStaticChains), caddr, votes, caddr)
+						if v := fileVersion(processExePathByPID(t.p.PID())); v != "" {
+							t.P("  [chain] 版本指纹: Savage Wind %s（链按 BOTW 1.9.0 + Savage Wind %s 标定；版本不同时护栏会更严格） / Version fingerprint\n",
+								v, savageWindChainCalVersion)
+						}
 						setLock(caddr, true, votes, "sw-chain")
 					}
 					chainHoldLogged = false

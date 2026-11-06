@@ -285,46 +285,34 @@ var (
 )
 
 // savageWindModuleOK G1 模块指纹：main 是否仍映射在标定基址（按句柄缓存，每 tick 至多一次 VQ）。
-// 注意：PE 映像的首区是只读头页（PAGE_READONLY，无执行位），因此基址区只查
-// "已提交"，可执行位改查 .text 区（基址+0x10000）；保护位同时接受 writecopy
-// （文件映射映像的典型形态）。任一检查失败都把实际观察值打进日志，便于区分
-// "布局真变了"和"检查写错了"。
+// 实测（2026-11-06 savagewind.log + VQ 观察）：recomp 把 guest main 按 guest 地址
+// **原地映射为一块 RW 私有数据区（Protect=0x04）**——静态重编译的原生代码不从这里
+// 执行，guest 指令只是数据。因此指纹 = "0x7000000000 起有一块已提交区"，不检查
+// 可执行位（检查了反而误杀）。
 func savageWindModuleOK(h uintptr) bool {
 	swModuleMu.Lock()
 	defer swModuleMu.Unlock()
 	if swModuleHandle == h {
 		return swModuleOKVal
 	}
-	ok := false
+	ok := true
 	why := "通过"
 	var mbi MemoryBasicInformation
 	switch {
 	case !vqRetry(h, swModuleBase, &mbi):
-		why = "0x7000000000 查询失败（地址未映射）"
+		ok, why = false, "0x7000000000 查询失败（地址未映射）"
 	case mbi.State != memCommit:
-		why = fmt.Sprintf("基址区未提交 State=0x%X", mbi.State)
+		ok, why = false, fmt.Sprintf("基址区未提交 State=0x%X", mbi.State)
 	case mbi.BaseAddress != swModuleBase:
-		why = fmt.Sprintf("基址区起点偏移 Base=0x%X", mbi.BaseAddress)
-	case !swExecRegionOK(h):
-		why = fmt.Sprintf("基址区 Protect=0x%X 且 +0x10000 处无可执行区", mbi.Protect&0xFF)
-	default:
-		ok = true
+		ok, why = false, fmt.Sprintf("基址区起点偏移 Base=0x%X", mbi.BaseAddress)
+	case mbi.Protect&0xFF == 0:
+		ok, why = false, fmt.Sprintf("基址区保护位异常 Protect=0x%X", mbi.Protect)
 	}
 	swModuleHandle, swModuleOKVal = h, ok
 	if !ok {
 		fmt.Printf("  [chain] 指纹护栏 G1：guest main 检查未过（%s）-> 静态链全链失效，落回动态扫描 / Module fingerprint mismatch (%s), chains disabled\n", why, why)
 	}
 	return ok
-}
-
-// swExecRegionOK .text 区（基址+0x10000，跳过 PE 头页）是否可执行提交区。
-func swExecRegionOK(h uintptr) bool {
-	var mbi MemoryBasicInformation
-	if !vqRetry(h, swModuleBase+0x10000, &mbi) || mbi.State != memCommit {
-		return false
-	}
-	p := mbi.Protect & 0xFF
-	return p == 0x20 || p == 0x40 || p == 0x80 // EXECUTE_READ / EXECUTE_READWRITE / EXECUTE_WRITECOPY
 }
 
 // swChainSampleOK G3 结构指纹：48 字节对象样本应为"合法坐标三元组 + 正交旋转矩阵"。

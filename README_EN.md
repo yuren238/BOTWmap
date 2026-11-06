@@ -4,7 +4,7 @@
 
 An interactive map of *The Legend of Zelda: Breath of the Wild* in Simplified Chinese — multi-layer markers, collection tracking, and real-time player navigation.
 
-![Latest release](https://img.shields.io/github/v/release/yalincc/BOTWmap?style=flat-square)　![Online demo](https://img.shields.io/badge/Demo-botw.yalin.site-9a7b4f)
+![Latest release](https://img.shields.io/github/v/release/yalincc/BOTWmap?style=flat-square)　![Online demo](https://img.shields.io/badge/Demo-botw.yalin.site-9a7b4f)　![PC port](https://img.shields.io/badge/Adapted%20for-PC%20Port%20(Savage%20Wind)-d97706)
 
 ![Map interface](https://botw.yalin.site/media/readme-hero-en.jpg)
 
@@ -55,7 +55,7 @@ What this fork adds for the PC port:
 
 Details, measurements and known limitations: [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md).
 
-Ready-to-run Windows package: [**latest Release**](https://github.com/yuren238/BOTWmap/releases/latest) (currently `v3.2.2-savagewind.6`) — unzip `Xnavi.exe` + `xnavi-core.exe` into one folder and pick **Savage Wind (PC Port)** in the platform dropdown.
+Ready-to-run Windows package: [**latest Release**](https://github.com/yuren238/BOTWmap/releases/latest) (currently `v3.2.2-savagewind.7`) — unzip `Xnavi.exe` + `xnavi-core.exe` into one folder and pick **Savage Wind (PC Port)** in the platform dropdown.
 
 ## Features
 
@@ -85,7 +85,7 @@ Ready-to-run Windows package: [**latest Release**](https://github.com/yuren238/B
 
 ## Version
 
-Web app **v1.7.5** · xnavi (independent versioning) **v3.2.2** — PC-port build **`v3.2.2-savagewind.6`**, see [Releases](https://github.com/yuren238/BOTWmap/releases) and [CHANGELOG.md](CHANGELOG.md).
+Web app **v1.7.5** · xnavi (independent versioning) **v3.2.2** — PC-port build **`v3.2.2-savagewind.7`**, see [Releases](https://github.com/yuren238/BOTWmap/releases) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 

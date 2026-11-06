@@ -55,7 +55,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 
 适配细节、实测数据与已知限制见 [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md)。
 
-开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.6`）
+开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.7`）
 （`Xnavi.exe` GUI + `xnavi-core.exe` 定位核心，解压后两个 exe 放同一目录，平台下拉选 **Savage Wind (PC移植版)**）。
 
 ## 核心功能
@@ -87,7 +87,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 
 ## 版本
 
-网页版 **v1.7.5**；导航程序 xnavi 版本独立（本适配版 Latest：**`v3.2.2-savagewind.6`**，见 [Releases](https://github.com/yuren238/BOTWmap/releases)；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）。更新明细见 [CHANGELOG.md](CHANGELOG.md)。
+网页版 **v1.7.5**；导航程序 xnavi 版本独立（本适配版 Latest：**`v3.2.2-savagewind.7`**，见 [Releases](https://github.com/yuren238/BOTWmap/releases)；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）。更新明细见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 免责声明
 

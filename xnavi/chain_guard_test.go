@@ -1,4 +1,4 @@
-// chain_guard_test.go — 指针链护栏 G3 结构指纹的单元测试。
+// chain_guard_test.go — 指针链护栏 G3 结构指纹（宽松版）的单元测试。
 // G1（模块指纹）与 G2（指针域）依赖进程内存，走真机/CI 手工验证。
 
 package main
@@ -13,21 +13,23 @@ func putF32(b []byte, off int, v float32) {
 	binary.LittleEndian.PutUint32(b[off:], math.Float32bits(v))
 }
 
-// 身份旋转矩阵（行列单位阵，正交归一，rotOKF 必过）
 func identityRot() [9]float32 {
 	return [9]float32{1, 0, 0, 0, 1, 0, 0, 0, 1}
 }
 
-func TestSwChainSampleOK_Valid(t *testing.T) {
+func validSample() []byte {
 	cb := make([]byte, 48)
 	putF32(cb, 0, -1000.5) // 大世界合法坐标
 	putF32(cb, 4, 200.0)
 	putF32(cb, 8, 1800.0)
-	rot := identityRot()
-	for i, v := range rot {
+	for i, v := range identityRot() {
 		putF32(cb, 12+i*4, v)
 	}
-	pos, ok := swChainSampleOK(cb)
+	return cb
+}
+
+func TestSwChainSampleOK_RotMatrix(t *testing.T) {
+	pos, ok := swChainSampleOK(validSample())
 	if !ok {
 		t.Fatalf("valid sample rejected")
 	}
@@ -36,49 +38,50 @@ func TestSwChainSampleOK_Valid(t *testing.T) {
 	}
 }
 
-func TestSwChainSampleOK_BadCoord(t *testing.T) {
+func TestSwChainSampleOK_Quat(t *testing.T) {
+	// 单位四元数 (0,0,0,1)：0x40 步长环缓冲对象（位置+四元数）的特征
 	cb := make([]byte, 48)
-	putF32(cb, 0, 1e12) // WorldCoordOK 必拒的野值
+	putF32(cb, 0, -1000.5)
 	putF32(cb, 4, 200.0)
 	putF32(cb, 8, 1800.0)
-	rot := identityRot()
-	for i, v := range rot {
-		putF32(cb, 12+i*4, v)
+	putF32(cb, 24, 1.0)
+	pos, ok := swChainSampleOK(cb)
+	if !ok {
+		t.Fatalf("quaternion sample rejected")
 	}
+	if pos[2] != 1800.0 {
+		t.Fatalf("coords roundtrip broken: %v", pos)
+	}
+}
+
+func TestSwChainSampleOK_UnknownLayoutLive(t *testing.T) {
+	// 布局未知但数据活跃（非全零）-> 容错放行（交给多链投票兜底）
+	cb := make([]byte, 48)
+	putF32(cb, 0, -1000.5)
+	putF32(cb, 4, 200.0)
+	putF32(cb, 8, 1800.0)
+	cb[12] = 0xAB
+	if _, ok := swChainSampleOK(cb); !ok {
+		t.Fatalf("unknown-but-live layout rejected (fault tolerance broken)")
+	}
+}
+
+func TestSwChainSampleOK_ZeroedTrailing(t *testing.T) {
+	// 坐标合法但后随 36 字节全零 = 死内存 -> 拒绝
+	cb := make([]byte, 48)
+	putF32(cb, 0, -1000.5)
+	putF32(cb, 4, 200.0)
+	putF32(cb, 8, 1800.0)
+	if _, ok := swChainSampleOK(cb); ok {
+		t.Fatalf("zeroed trailing accepted")
+	}
+}
+
+func TestSwChainSampleOK_BadCoord(t *testing.T) {
+	cb := validSample()
+	putF32(cb, 0, 1e12) // WorldCoordOK 必拒的野值
 	if _, ok := swChainSampleOK(cb); ok {
 		t.Fatalf("wild coordinate accepted")
-	}
-}
-
-func TestSwChainSampleOK_BadMatrix(t *testing.T) {
-	// 坐标合法但"旋转矩阵"缩放 2 倍（非正交归一）-> 必须拒绝
-	cb := make([]byte, 48)
-	putF32(cb, 0, -1000.5)
-	putF32(cb, 4, 200.0)
-	putF32(cb, 8, 1800.0)
-	for i, v := range identityRot() {
-		putF32(cb, 12+i*4, v*2)
-	}
-	if _, ok := swChainSampleOK(cb); ok {
-		t.Fatalf("non-orthonormal matrix accepted")
-	}
-}
-
-func TestSwChainSampleOK_NaNMatrix(t *testing.T) {
-	// NaN 矩阵（对象内存被清/损坏的典型形态）-> 必须拒绝
-	cb := make([]byte, 48)
-	putF32(cb, 0, -1000.5)
-	putF32(cb, 4, 200.0)
-	putF32(cb, 8, 1800.0)
-	rot := identityRot()
-	for i, v := range rot {
-		if i == 0 {
-			v = float32(math.NaN())
-		}
-		putF32(cb, 12+i*4, v)
-	}
-	if _, ok := swChainSampleOK(cb); ok {
-		t.Fatalf("NaN matrix accepted")
 	}
 }
 
@@ -92,9 +95,8 @@ func TestSwChainSampleOK_ShortBuffer(t *testing.T) {
 }
 
 func TestSwChainSampleOK_ZeroedSample(t *testing.T) {
-	// 全零样本：坐标 (0,0,0) 与全零"矩阵"都应拒绝（槽位被清零 ≠ 玩家对象）
-	cb := make([]byte, 48)
-	if _, ok := swChainSampleOK(cb); ok {
+	// 全零样本：坐标 (0,0,0) 本身就不合法
+	if _, ok := swChainSampleOK(make([]byte, 48)); ok {
 		t.Fatalf("zeroed sample accepted")
 	}
 }

@@ -282,7 +282,24 @@ var (
 	swModuleMu     sync.Mutex
 	swModuleHandle uintptr
 	swModuleOKVal  bool
+	swDiagMu       sync.Mutex
+	swDiagHandle   uintptr
 )
+
+// swGuardDiag 票不足时输出一次性护栏分布（每句柄一次），用于判断护栏是否误杀真链。
+func swGuardDiag(h uintptr, total, readFail, g2Fail, structFail, votes int) {
+	if votes >= 2 {
+		return
+	}
+	swDiagMu.Lock()
+	defer swDiagMu.Unlock()
+	if swDiagHandle == h {
+		return
+	}
+	swDiagHandle = h
+	fmt.Printf("  [chain] 护栏诊断（每句柄一次）：%d 条链中 读失败 %d / 指针域不符(G2) %d / 结构不符(G3) %d -> 有效票 %d / Guard breakdown\n",
+		total, readFail, g2Fail, structFail, votes)
+}
 
 // savageWindModuleOK G1 模块指纹：main 是否仍映射在标定基址（按句柄缓存，每 tick 至多一次 VQ）。
 // 实测（2026-11-06 savagewind.log + VQ 观察）：recomp 把 guest main 按 guest 地址
@@ -315,7 +332,13 @@ func savageWindModuleOK(h uintptr) bool {
 	return ok
 }
 
-// swChainSampleOK G3 结构指纹：48 字节对象样本应为"合法坐标三元组 + 正交旋转矩阵"。
+// swChainSampleOK G3 结构指纹（宽松版，留足容错）：
+//   硬门槛 = 坐标三元组合法（WorldCoordOK，Wild 值必拒）；
+//   软门槛 = 后随 36 字节非全零（活对象特征，全零 = 槽位被清/指向死内存）；
+//   强通过 = ①+12 起单位四元数（0x40 步长环缓冲对象：位置+四元数）或
+//            ②+12 起正交归一旋转矩阵（locate.go 结构扫描门禁同款）。
+// 设计取舍：18 条链指向的对象布局不完全相同，宁松勿严——误杀真链会让链条
+// 永不接管（退回慢速海选），而拦垃圾主要靠坐标门槛 + 多链投票。
 func swChainSampleOK(cb []byte) ([3]float32, bool) {
 	if len(cb) < 48 {
 		return [3]float32{}, false
@@ -326,12 +349,32 @@ func swChainSampleOK(cb []byte) ([3]float32, bool) {
 	if !WorldCoordOK(x, y, z) {
 		return [3]float32{}, false
 	}
+	// 软门槛：后随数据全零 = 死内存，拒绝
+	live := false
+	for _, b := range cb[12:48] {
+		if b != 0 {
+			live = true
+			break
+		}
+	}
+	if !live {
+		return [3]float32{}, false
+	}
+	// 强指纹（命中任一即认为结构可信；都不命中也不否决，交给投票）
+	qn := 0.0
+	for i := 0; i < 4; i++ {
+		v := float64(math.Float32frombits(binary.LittleEndian.Uint32(cb[12+i*4:])))
+		qn += v * v
+	}
+	if qn > 0.81 && qn < 1.21 { // 单位四元数：模长平方 ≈ 1
+		return [3]float32{x, y, z}, true
+	}
 	var m [9]float32
 	for i := 0; i < 9; i++ {
 		m[i] = math.Float32frombits(binary.LittleEndian.Uint32(cb[12+i*4:]))
 	}
-	if !rotOKF(m[:]) {
-		return [3]float32{}, false
+	if rotOKF(m[:]) {
+		return [3]float32{x, y, z}, true
 	}
 	return [3]float32{x, y, z}, true
 }
@@ -351,26 +394,32 @@ func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
 		addr uintptr
 	}
 	hits := make([]hit, 0, len(savageWindStaticChains))
+	readFail, g2Fail, structFail := 0, 0, 0
 	for _, ch := range savageWindStaticChains {
 		buf := readMem(h, ch.static, 8)
 		if len(buf) != 8 {
+			readFail++
 			continue
 		}
 		ptr := uintptr(binary.LittleEndian.Uint64(buf))
 		// G2 指针域：活对象在 guest 堆，解出模块内地址 = 布局已变
 		if ptr < swModuleBase+swModuleSize || ptr >= swGuestHi {
+			g2Fail++
 			continue
 		}
 		cb := readMem(h, ptr+ch.off, 48)
 		if len(cb) != 48 {
+			readFail++
 			continue
 		}
 		pos, ok := swChainSampleOK(cb)
 		if !ok {
+			structFail++
 			continue
 		}
 		hits = append(hits, hit{pos, ptr + ch.off})
 	}
+	swGuardDiag(h, len(savageWindStaticChains), readFail, g2Fail, structFail, len(hits))
 	if len(hits) < 2 {
 		return [3]float32{}, 0, 0
 	}

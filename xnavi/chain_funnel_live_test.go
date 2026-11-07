@@ -59,3 +59,35 @@ func TestFunnelLive(t *testing.T) {
 	}
 	t.Logf("学到 %d 条槽位后 L0 直读恢复：%d 票，%v", len(learned), votes3, pos3)
 }
+
+// TestPlaceAnchorLive 验证 savagewind.log 的 [place] 锚点与链读数一致。
+// 需要 savagewind.exe 在跑；CI 上自动跳过。
+func TestPlaceAnchorLive(t *testing.T) {
+	pid := findSavageWindPid()
+	if pid == 0 {
+		t.Skip("savagewind.exe 未运行，跳过真机验证")
+	}
+	h, err := openProcess(pid)
+	if err != nil || h == 0 {
+		t.Skipf("OpenProcess(%d) 失败（需要管理员权限）: %v，跳过", pid, err)
+	}
+	defer closeHandle(h)
+
+	pos, fresh, ok := savageWindPlaceAnchor(h)
+	if !ok {
+		t.Skip("savagewind.log 里没有可用的 [place] 行")
+	}
+	t.Logf("[place] 锚点 (%.2f, %.2f, %.2f) fresh=%v", pos[0], pos[1], pos[2], fresh)
+
+	pos2, votes, _ := readSavageWindChains(h)
+	if votes < 2 {
+		t.Logf("链条当前不可用（%d 票），跳过一致性比对", votes)
+		return
+	}
+	// 场景切换后玩家可能已走动，只做宽松校验：差距应远小于旧存档漂移（>300m）
+	if d := dist3(pos, pos2); d > 300.0 {
+		t.Fatalf("[place] 锚点与链条读数相差 %.0fm，锚点可能来自其它存档", d)
+	} else {
+		t.Logf("与链条读数差 %.1fm（%d 票）", d, votes)
+	}
+}

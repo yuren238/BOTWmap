@@ -637,11 +637,24 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 					}
 				}
 
+				// Savage Wind：日志真值锚点（场景切换时游戏自己打印，比存档实时）
+				var placePos [3]float32
+				placeFresh, placeOK := false, false
+				if t.useChains {
+					placePos, placeFresh, placeOK = savageWindPlaceAnchor(h)
+				}
+
 				switch {
 				case hasManual:
 					scanCenter = manualTarget
 					radius = 150.0
 					t.P("  [scan] Ryujinx 扫描手工定向窗口 150m (%.1f, %.1f)... / Scanning manual window 150m near (%.1f, %.1f)...\n", scanCenter[0], scanCenter[2], scanCenter[0], scanCenter[2])
+				case placeFresh:
+					// 刚发生读档/传送/进出神庙：日志 [place] 是游戏给的真值，窗口收到 60m
+					scanCenter = placePos
+					radius = 60.0
+					t.P("  [scan] Savage Wind 日志真值锚点 [place] (%.1f, %.1f, %.1f)——场景刚切换，扫描 60m 窗口 / Fresh [place] anchor, scanning 60m...\n",
+						scanCenter[0], scanCenter[1], scanCenter[2])
 				case latestSaveAnchor != nil:
 					// 始终以最新存档锚点为中心扫描（绝不拿切场景掉锁前的旧废弃坐标当中心）
 					scanCenter = latestSaveAnchor.Pos
@@ -649,6 +662,12 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 					if saveIsFresh {
 						t.P("  [scan] Ryujinx 发现新鲜存档 (<=120s)，扫描 120m 锚点窗口 (%.1f, %.1f, %.1f)... / Fresh save detected, scanning window 120m...\n",
 							scanCenter[0], scanCenter[1], scanCenter[2])
+					} else if placeOK {
+						// 存档旧：日志 [place] 每次场景切换都刷新，通常比存档新得多
+						scanCenter = placePos
+						radius = 200.0
+						t.P("  [scan] 存档已 %.0f 分钟未更新，改用日志 [place] 锚点 (%.1f, %.1f, %.1f) 扫描 200m 窗口 / Stale save (%.0fm), using [place] anchor, 200m window...\n",
+							saveAge.Minutes(), scanCenter[0], scanCenter[1], scanCenter[2], saveAge.Minutes())
 					} else {
 						// 存档越旧，玩家离锚点越远：直接放宽到 400m，
 						// 免得先在 120m 里锁到一堆上一次的静态残留（锁上去就是坐标冻结）。
@@ -661,6 +680,12 @@ func (t *RyujinxTracker) Start(ctx context.Context) {
 								scanCenter[0], scanCenter[1], scanCenter[2])
 						}
 					}
+				case placeOK:
+					// 没有存档锚点（新开档/存档目录未配置），但日志有真值
+					scanCenter = placePos
+					radius = 200.0
+					t.P("  [scan] 无存档锚点，用日志 [place] 锚点 (%.1f, %.1f, %.1f) 扫描 200m 窗口 / No save anchor, using [place] anchor, 200m window...\n",
+						scanCenter[0], scanCenter[1], scanCenter[2])
 				default:
 					state.mu.Lock()
 					state.ok = false

@@ -415,6 +415,12 @@ func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
 			readFail++
 			continue
 		}
+		// G3a 结构硬判据：obj+0x00 必须是指向静态区的类型指针（18/18 实测成立）。
+		// 解到随机堆地址时几乎不可能满足——比"坐标碰巧合法"硬得多。
+		if !swStaticPtrAt0(h, ptr) {
+			structFail++
+			continue
+		}
 		pos, ok := swChainSampleOK(cb)
 		if !ok {
 			structFail++

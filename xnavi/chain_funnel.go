@@ -35,6 +35,7 @@ const (
 	swSelfRefOff  = uintptr(0x120) // 自指字段偏移（intrusive list 头）
 	swFunnelChunk = 4 << 20        // 扫描分块大小
 	swFunnelEvery = 3 * time.Second
+	swStaticScanSpan = 512 << 20 // 静态区/类型指针有效范围（上游同口径）
 )
 
 // swTripleStrict 严格世界坐标判据（上游 validTriple 同口径）。
@@ -74,6 +75,18 @@ func swTripleStrict(x, alt, z float32) bool {
 		}
 	}
 	return true
+}
+
+// swStaticPtrAt0 obj+0x00 是否为指向静态区的类型指针（上游 staticPtrAt0 判据）。
+// 实测（2026-11-07）18/18 条标定链一致成立——"解出的地址确实是活对象头"的
+// 通用硬判据，比"坐标碰巧合法"强得多：解到随机堆内存时几乎不可能命中。
+func swStaticPtrAt0(h, obj uintptr) bool {
+	b := readMem(h, obj, 8)
+	if len(b) != 8 {
+		return false
+	}
+	v := uintptr(binary.LittleEndian.Uint64(b))
+	return v >= swModuleBase && v < swModuleBase+swStaticScanSpan
 }
 
 func swReadTriple(h, addr uintptr) ([3]float32, bool) {

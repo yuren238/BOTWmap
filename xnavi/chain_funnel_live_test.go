@@ -1,0 +1,61 @@
+package main
+
+// chain_funnel_live_test.go — 结构漏斗的真机验证（需要 savagewind.exe 在跑；CI 上自动跳过）
+//
+//	go test -run TestFunnelLive -v
+
+import (
+	"testing"
+)
+
+func TestFunnelLive(t *testing.T) {
+	pid := findSavageWindPid()
+	if pid == 0 {
+		t.Skip("savagewind.exe 未运行，跳过真机验证")
+	}
+	h, err := openProcess(pid)
+	if err != nil || h == 0 {
+		t.Skipf("OpenProcess(%d) 失败（需要管理员权限）: %v，跳过", pid, err)
+	}
+	defer closeHandle(h)
+
+	hit, ok := resolveSavageWindFunnel(h)
+	if !ok {
+		t.Fatalf("漏斗未唯一命中（判据可能不符当前版本）")
+	}
+	if !WorldCoordOK(hit.pos[0], hit.pos[1], hit.pos[2]) {
+		t.Fatalf("命中坐标非法: %v", hit.pos)
+	}
+	if hit.obj < swModuleBase+swModuleSize || hit.obj >= swGuestHi {
+		t.Fatalf("命中对象不在 guest 堆: 0x%X", hit.obj)
+	}
+	t.Logf("命中 obj=0x%X 坐标=(%.1f, %.1f, %.1f) 槽=0x%X/0x%X",
+		hit.obj, hit.pos[0], hit.pos[1], hit.pos[2], hit.slots[0], hit.slots[1])
+	if hit.slots[0] != 0 && (hit.slots[0] < swModuleBase || hit.slots[0] >= swModuleBase+swModuleSize) {
+		t.Fatalf("槽位不在静态区: 0x%X", hit.slots[0])
+	}
+
+	// 与 18 条标定链投票结果对比：都应指向同一玩家（误差 < 8m）
+	pos2, votes, _ := readSavageWindChains(h)
+	if votes >= 2 {
+		d := dist3(pos2, hit.pos)
+		if d > 8.0 {
+			t.Fatalf("漏斗与链条结果不一致: 漏斗 %v / 链条 %v (差 %.1fm)", hit.pos, pos2, d)
+		}
+		t.Logf("与标定链一致（%d 票，差 %.2fm）", votes, d)
+	}
+
+	// 学到槽位后，L0 直读应能命中（模拟链失效后的自愈路径）
+	learned := swLearnChains(h, hit)
+	if len(learned) == 0 {
+		t.Fatalf("槽位学习失败")
+	}
+	pos3, votes3, _ := readSavageWindChains(h)
+	if votes3 < 2 {
+		t.Fatalf("学到槽位后 L0 仍未接管（votes=%d）", votes3)
+	}
+	if d := dist3(pos3, hit.pos); d > 8.0 {
+		t.Fatalf("学到槽位后坐标偏离 %.1fm", d)
+	}
+	t.Logf("学到 %d 条槽位后 L0 直读恢复：%d 票，%v", len(learned), votes3, pos3)
+}

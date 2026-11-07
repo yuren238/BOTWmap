@@ -389,13 +389,16 @@ func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
 		return [3]float32{}, 0, 0
 	}
 
+	// 链集合 = 标定 18 条（+ 漏斗重建过的槽位，若已学到）
+	chains, primaryIdx := swChainSet(h)
+
 	type hit struct {
 		pos  [3]float32
 		addr uintptr
 	}
-	hits := make([]hit, 0, len(savageWindStaticChains))
+	hits := make([]hit, 0, len(chains))
 	readFail, g2Fail, structFail := 0, 0, 0
-	for _, ch := range savageWindStaticChains {
+	for _, ch := range chains {
 		buf := readMem(h, ch.static, 8)
 		if len(buf) != 8 {
 			readFail++
@@ -419,13 +422,17 @@ func readSavageWindChains(h uintptr) ([3]float32, int, uintptr) {
 		}
 		hits = append(hits, hit{pos, ptr + ch.off})
 	}
-	swGuardDiag(h, len(savageWindStaticChains), readFail, g2Fail, structFail, len(hits))
+	swGuardDiag(h, len(chains), readFail, g2Fail, structFail, len(hits))
 	if len(hits) < 2 {
+		// L0 票数不足 -> L1 结构漏斗现场重建（节流 3s；命中后槽位写入学习缓存）
+		if pos, votes, addr, ok := swFunnelFallback(h); ok {
+			return pos, votes, addr
+		}
 		return [3]float32{}, 0, 0
 	}
 
 	// 主链优先：重读主链指针确定其坐标地址，与 hits 比对
-	primary := savageWindStaticChains[savageWindChainPrimary]
+	primary := chains[primaryIdx]
 	var primaryAddr uintptr
 	if pb := readMem(h, primary.static, 8); len(pb) == 8 {
 		if p := uintptr(binary.LittleEndian.Uint64(pb)); p >= swModuleBase+swModuleSize && p < swGuestHi {

@@ -69,6 +69,12 @@ func findSavageWindPid() uint32 {
 func (p *savageWindPlatform) Attach() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// 快路径：句柄还在且进程没死 -> 直接返回。
+	// 上游经验（xnavi-pc）：每个 tick 枚举全进程太浪费，GetExitCodeProcess 是微秒级。
+	// 进程重启时旧句柄指向已终止的进程对象，processAlive 立刻为假 -> 落到下面的重新发现。
+	if p.h != 0 && p.pid != 0 && processAlive(p.h) {
+		return true
+	}
 	pid := findSavageWindPid()
 	if pid == 0 {
 		if p.h != 0 {

@@ -60,6 +60,25 @@ func TestFunnelLive(t *testing.T) {
 	t.Logf("学到 %d 条槽位后 L0 直读恢复：%d 票，%v", len(learned), votes3, pos3)
 }
 
+// TestProcessAliveLive 验证 processAlive 对运行中进程返回真（Attach 快路径的前提）。
+func TestProcessAliveLive(t *testing.T) {
+	pid := findSavageWindPid()
+	if pid == 0 {
+		t.Skip("savagewind.exe 未运行，跳过")
+	}
+	h, err := openProcess(pid)
+	if err != nil || h == 0 {
+		t.Skipf("OpenProcess(%d) 失败（需要管理员权限）: %v，跳过", pid, err)
+	}
+	defer closeHandle(h)
+	if !processAlive(h) {
+		t.Fatalf("运行中的进程 %d 被判为已退出", pid)
+	}
+	if processAlive(0) {
+		t.Fatal("空句柄被判为存活")
+	}
+}
+
 // TestPlaceAnchorLive 验证 savagewind.log 的 [place] 锚点与链读数一致。
 // 需要 savagewind.exe 在跑；CI 上自动跳过。
 func TestPlaceAnchorLive(t *testing.T) {

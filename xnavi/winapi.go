@@ -25,7 +25,22 @@ var (
 	procProcess32NextW           = kernel32.NewProc("Process32NextW")
 	procSetConsoleTitleW         = kernel32.NewProc("SetConsoleTitleW")
 	procCreateMutexW             = kernel32.NewProc("CreateMutexW")
+	procGetExitCodeProcess       = kernel32.NewProc("GetExitCodeProcess")
 )
+
+// stillActive GetExitCodeProcess 的 STILL_ACTIVE 返回值。
+const stillActive = 259
+
+// processAlive 进程是否仍在运行（微秒级，比枚举全进程快两个数量级）。
+// 用于平台 Attach 的快路径：句柄还在、进程没死就不必重新找 PID。
+func processAlive(h uintptr) bool {
+	if h == 0 {
+		return false
+	}
+	var code uint32
+	r, _, _ := procGetExitCodeProcess.Call(h, uintptr(unsafe.Pointer(&code)))
+	return r != 0 && code == stillActive
+}
 
 const (
 	processQueryInformation = 0x0400

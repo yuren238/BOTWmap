@@ -18,6 +18,9 @@ func TestFunnelLive(t *testing.T) {
 		t.Skipf("OpenProcess(%d) 失败（需要管理员权限）: %v，跳过", pid, err)
 	}
 	defer closeHandle(h)
+	if !savageWindModuleOK(h) {
+		t.Skip("guest 堆尚未就位（游戏还在标题画面），跳过真机验证")
+	}
 
 	hit, ok := resolveSavageWindFunnel(h)
 	if !ok {
@@ -91,6 +94,9 @@ func TestPlaceAnchorLive(t *testing.T) {
 		t.Skipf("OpenProcess(%d) 失败（需要管理员权限）: %v，跳过", pid, err)
 	}
 	defer closeHandle(h)
+	if !savageWindModuleOK(h) {
+		t.Skip("guest 堆尚未就位（游戏还在标题画面），跳过真机验证")
+	}
 
 	pos, fresh, ok := savageWindPlaceAnchor(h)
 	if !ok {

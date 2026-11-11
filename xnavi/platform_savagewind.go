@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // guest 地址空间下界：Switch 用户态地址从 0x7000000000 起（日志实测模块基址）。
@@ -272,7 +273,10 @@ var savageWindStaticChains = []swStaticChain{
 //                解出模块内地址 = .data 布局已变的强信号）
 //   G3 结构指纹：对象内 [坐标, 坐标+0x30) 必须是"合法三元组 + 正交旋转矩阵"
 //                （与标定时结构扫描的门禁同款，见 locate.go rotOKF）
-// G1 失败 = 布局已变，全链直接失效（0 票）落回动态扫描管道。
+// G1 失败 = guest 堆尚未就位或布局已变，本 tick 全链弃权（0 票）落回动态扫描管道。
+// 注意 G1 判负只是"暂缓"而非"判死"：0.5.1 起游戏在标题画面前 0x7000000000 只是
+// RESERVE（12.5GB 保留未提交），SetHeapSize 之后才 COMMIT；若定位先于游戏的堆分配
+// 启动，一次判负就会锁掉整局的静态链。因此负结果每 2s 重试，只有通过才锁定。
 // ---------------------------------------------------------------------------
 
 const (
@@ -285,11 +289,13 @@ const (
 const savageWindChainCalVersion = "0.4.1-alpha.4"
 
 var (
-	swModuleMu     sync.Mutex
-	swModuleHandle uintptr
-	swModuleOKVal  bool
-	swDiagMu       sync.Mutex
-	swDiagHandle   uintptr
+	swModuleMu      sync.Mutex
+	swModuleHandle  uintptr
+	swModuleOKVal   bool
+	swModuleWarned  bool
+	swModuleRetryAt time.Time
+	swDiagMu        sync.Mutex
+	swDiagHandle    uintptr
 )
 
 // swGuardDiag 票不足时输出一次性护栏分布（每句柄一次），用于判断护栏是否误杀真链。
@@ -307,16 +313,29 @@ func swGuardDiag(h uintptr, total, readFail, g2Fail, structFail, votes int) {
 		total, readFail, g2Fail, structFail, votes)
 }
 
-// savageWindModuleOK G1 模块指纹：main 是否仍映射在标定基址（按句柄缓存，每 tick 至多一次 VQ）。
+// savageWindModuleOK G1 模块指纹：main 是否仍映射在标定基址（每 tick 至多一次 VQ）。
 // 实测（2026-11-06 savagewind.log + VQ 观察）：recomp 把 guest main 按 guest 地址
 // **原地映射为一块 RW 私有数据区（Protect=0x04）**——静态重编译的原生代码不从这里
 // 执行，guest 指令只是数据。因此指纹 = "0x7000000000 起有一块已提交区"，不检查
 // 可执行位（检查了反而误杀）。
+//
+// 缓存策略（2026-11-11 改）：**只锁定通过，不锁定失败**。0.5.1 在进入游戏前，
+// 0x7000000000 是 RESERVE（State=0x2000，12.5GB 只保留未提交），要等游戏调
+// SetHeapSize 才 COMMIT——若定位比游戏的堆分配早启动，旧实现在第一次判负后
+// 按句柄永久缓存 false，整局静态链都不会再复查，只能跑海选扫描。
+// 现在负结果保留 2s 再试，转正时打一行恢复日志；句柄变化则整体重置。
 func savageWindModuleOK(h uintptr) bool {
 	swModuleMu.Lock()
 	defer swModuleMu.Unlock()
-	if swModuleHandle == h {
-		return swModuleOKVal
+	now := time.Now()
+	if swModuleHandle != h {
+		swModuleHandle, swModuleOKVal, swModuleWarned, swModuleRetryAt = h, false, false, time.Time{}
+	}
+	if swModuleOKVal {
+		return true // 已通过：锁定，不再复查
+	}
+	if !swModuleRetryAt.IsZero() && now.Before(swModuleRetryAt) {
+		return false // 判负后的 2s 冷却期内不重复查询
 	}
 	ok := true
 	why := "通过"
@@ -331,11 +350,19 @@ func savageWindModuleOK(h uintptr) bool {
 	case mbi.Protect&0xFF == 0:
 		ok, why = false, fmt.Sprintf("基址区保护位异常 Protect=0x%X", mbi.Protect)
 	}
-	swModuleHandle, swModuleOKVal = h, ok
-	if !ok {
-		fmt.Printf("  [chain] 指纹护栏 G1：guest main 检查未过（%s）-> 静态链全链失效，落回动态扫描 / Module fingerprint mismatch (%s), chains disabled\n", why, why)
+	if ok {
+		swModuleOKVal, swModuleRetryAt = true, time.Time{}
+		if swModuleWarned {
+			fmt.Printf("  [chain] 指纹护栏 G1 恢复：guest main 已就位（%s）-> 静态链接管 / Module fingerprint now matches, chains enabled\n", why)
+		}
+		return true
 	}
-	return ok
+	swModuleRetryAt = now.Add(2 * time.Second)
+	if !swModuleWarned {
+		swModuleWarned = true
+		fmt.Printf("  [chain] 指纹护栏 G1：guest main 尚未就位（%s）-> 本 tick 静态链弃权，2s 后复查（不判死）/ Module not ready (%s), chains paused, retrying\n", why, why)
+	}
+	return false
 }
 
 // swChainSampleOK G3 结构指纹（宽松版，留足容错）：

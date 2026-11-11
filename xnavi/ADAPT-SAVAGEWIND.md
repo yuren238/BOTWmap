@@ -105,11 +105,13 @@ REM    存档路径非默认时： --savagewind-save-dir="D:\Savage Wind Recomp\
 | --- | --- | --- |
 | 进程识别 / 内存块枚举 | 已通过 | `[platform] selected: SavageWind`；guest 地址 `0x723FF00000` 起 3121MB RW 区域 |
 | 存档发现 + 解析（1.9.0 / `0x4730`） | 已通过 | 6 个槽坐标全部通过 `gameValidTriple`，`saveSource=自省命中: Savage Wind 目录` |
-| 进度表重建 | 已通过 | `/progress`：shrine 4/136、tower 1/15、korok 1/900，与存档一致 |
-| 地图页本地加载 | 已通过 | `/botw/` 与 `/botw/js/live.js` 均 200；`[asset] BOTWmap assets mounted` |
-| 实时坐标锁定 | 已通过 | 锚点 120m 窗口 3.4~4.4s 锁定；`/pos` 返回 `gx=-647.3, gy=174.1, gz=1876.1, copies=5, source=player` |
-| 真身判定（走动） | 已通过 | 锁定地址 `0x72E920DA70` 与另一副本在玩家走动后同步位移 **71.6m / 71.9m**，方向一致，确认锁到林克本体而非静态数据 |
-| 记录结构指纹 | 已通过 | 锁定点处为 0x40 步长「位置 + 单位四元数」环缓冲，连续 33 条（Run=33），静止时坐标仅抖动 ±0.01m |
+| 进度表重建 | 已通过 | `/progress`：shrine 14/136、tower 4/15、korok 82/900，与存档一致 |
+| 地图页本地加载 | 已通过 | `/botw/`、`js/map.js`、`assets/tiles/tiles_idx.js` 均 200，瓦片 `.pack` 的 `Range` 请求返回 206 |
+| 静态指针链接管 | 已通过（0.5.0-alpha.5） | `[chain] Savage Wind 静态指针链接管（15/18 条链一致 @0x73020A88E8）`，0.4s 锁定，免扫描 |
+| 结构漏斗兜底 | 已通过（0.5.0-alpha.5） | 链失效时 164ms 在 25 万静态引用里唯一命中；学到槽位后 19 票 |
+| 真值锚点一致性 | 已通过 | 同一时刻 `/pos` 与 `savagewind.log` 的 `[place]` 差 0.5~0.6m |
+| 读档跟随 | 已通过 | `[warp] 角色大传送 (615.4m) -> 神庙... [指针链零损耗接管]`，采样 90 次坐标连续变化 |
+| 0.5.1-alpha.5 适配 | 待真机复测 | 游戏代码仍是 1.9.0、`swgame.dll` 重建；标题画面前 `0x7000000000` 为 RESERVE，需进世界后确认 18 链票数 |
 
 ## 7. 已知限制与待办
 
@@ -120,8 +122,10 @@ REM    存档路径非默认时： --savagewind-save-dir="D:\Savage Wind Recomp\
 3. **首次扫描成本**：3.1GB 全量窗口扫描约 3.4~4.4s（8MB 分块 / 4 worker）；锁定后只读 1 个地址，
    开销可忽略。`known_botw_savagewind.json` 会让二次启动秒锁，但前提是 guest 块基址变化时偏移稳定
    （实测两次启动偏移一致）。
-4. **只在 Windows + Savage Wind 0.4.1-alpha.4 / 游戏 1.9.0 实测**：Savage Wind 仍是 alpha，
-   若后续版本改变 guest 映射方式，需重新核对 `Blocks()` 的筛选条件（guest 区间 / RW / 大小）。
+4. **实测版本：Windows + Savage Wind 0.5.1-alpha.5 / 游戏 1.9.0**（链路标定于 0.4.1 ~ 0.5.0，0.5.1 复测中）。
+   Savage Wind 仍是 alpha，若后续版本改变 guest 映射方式，需重新核对 `Blocks()` 的筛选条件。
+5. **G1 只看"已提交"这一件事**：0.5.1 在标题画面前 `0x7000000000` 是 RESERVE，`SetHeapSize` 之后才 COMMIT。
+   护栏因此只在通过后锁定、判负每 2s 复查——先开工具再开游戏不会再让静态链整局失效。
 5. **xnavi-gui（Wails 壳）未同步**：GUI 的平台下拉、存档路径输入还没有 Savage Wind 项，
    目前用命令行 `--emu=savagewind` / `--savagewind-save-dir=` 等价可用。
 6. **存档槽选择**：按 mtime 降序取第一个 `Playtime>0` 的档作为主锚（正在玩的档一定最近写入），

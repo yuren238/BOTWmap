@@ -85,7 +85,7 @@ Ready-to-run Windows package: [**latest Release**](https://github.com/yuren238/B
 
 ## Version
 
-Web app **v1.7.5** · xnavi (independent versioning) **v3.2.2** — PC-port build **`v3.2.2-savagewind.7`**, see [Releases](https://github.com/yuren238/BOTWmap/releases) and [CHANGELOG.md](CHANGELOG.md).
+Web app **v1.7.8** · xnavi (independent versioning) **v3.3.0** — PC-port build **`v3.3.0-savagewind.8`**, see [Releases](https://github.com/yuren238/BOTWmap/releases) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Disclaimer
 

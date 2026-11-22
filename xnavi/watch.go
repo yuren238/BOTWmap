@@ -237,6 +237,18 @@ func stateMachine() {
 					lastWaitLog = time.Now()
 					logWarn("未检测到游戏进程 —— 请先启动 Cemu/Ryujinx/Eden/Savage Wind 并进入游戏（10 秒后重试）/ No game process detected — start Cemu/Ryujinx/Eden/Savage Wind and enter the game")
 				}
+				// auto 模式下当前平台进程不在 → 换台重探。
+				// 否则核心先于游戏启动时会永远卡在默认平台（Ryujinx）：
+				// ensureAttach 失败直接 continue，下面的零块重探永远到不了。
+				if autoPlatform && time.Since(lastZeroProbe) >= 15*time.Second {
+					lastZeroProbe = time.Now()
+					if alt := platformWithProcess(currentPlatform()); alt != nil {
+						logInfo("auto: %s 进程不在，换到 %s / auto: %s absent, switching to %s",
+							currentPlatform().Name(), alt.Name(), currentPlatform().Name(), alt.Name())
+						setPlatform(alt)
+						zeroBlockN = 0
+					}
+				}
 				continue
 			}
 

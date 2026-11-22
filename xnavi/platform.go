@@ -141,3 +141,26 @@ func platformWithGame(exclude Platform) Platform {
 	}
 	return nil
 }
+
+// platformWithProcess 找"进程在跑"的注册平台（进程在跑优先、有游戏大块更优先）。
+// 用于 auto 模式当前平台进程消失时的换台重探：等待游戏加载期间可能还没有
+// 大块内存，只看进程存在即可接管，加载后由零块重探继续校准。
+func platformWithProcess(exclude Platform) Platform {
+	if alt := platformWithGame(exclude); alt != nil {
+		return alt
+	}
+	exName := ""
+	if exclude != nil {
+		exName = exclude.Name()
+	}
+	for _, p := range probeList {
+		if p.Name() == exName {
+			continue
+		}
+		if p.Attach() {
+			logInfo("%s process alive (no game block yet)\n", p.Name())
+			return p
+		}
+	}
+	return nil
+}

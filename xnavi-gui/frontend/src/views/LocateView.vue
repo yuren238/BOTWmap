@@ -38,13 +38,19 @@
         </template>
       </div>
       <div class="flex items-center gap-2.5 shrink-0">
-        <select v-model="cfg.emulator" @change="onEmuChange" :title="t('emu.pickTitle')"
+        <select v-if="edition !== 'pc'" v-model="cfg.emulator" @change="onEmuChange" :title="t('emu.pickTitle')"
           class="bg-[#0d1117] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-500 focus:outline-none transition">
           <option value="auto">{{ t('emu.auto') }}</option>
           <option value="cemu">{{ t('emu.cemu') }}</option>
           <option value="ryujinx">{{ t('emu.ryujinx') }}</option>
           <option value="eden">{{ t('emu.eden') }}</option>
           <option value="savagewind">{{ t('emu.savagewind') }}</option>
+        </select>
+        <span v-else class="bg-[#0d1117] border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs font-medium text-sky-300">{{ t('emu.pc') }}</span>
+        <select v-if="edition !== 'pc'" v-model="cfg.locateMode" @change="onLocateModeChange" :title="t('locateMode.hint')"
+          class="bg-[#0d1117] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:border-slate-500 focus:outline-none transition">
+          <option value="auto">{{ t('locateMode.auto') }}</option>
+          <option value="mod-inject" :disabled="cfg.emulator !== 'auto' && cfg.emulator !== 'eden'">{{ t('locateMode.modInject') }}</option>
         </select>
         <button @click="openMap" class="w-[124px] py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-medium border border-slate-700 flex items-center justify-center gap-1.5 transition">
           🧭 {{ t('buttons.openMap') }}
@@ -95,8 +101,9 @@
           </div>
         </section>
 
-        <!-- 坐标校准卡（BOTW 定向找人） -->
-        <section class="bg-[#161b22] border border-slate-800 rounded-xl p-3 shrink-0">
+        <!-- 坐标校准卡（BOTW 定向找人）：模组注入模式下坐标由游戏内模组直接提供，此功能不可用 -->
+        <section class="relative bg-[#161b22] border border-slate-800 rounded-xl p-3 shrink-0">
+          <div :class="cfg.locateMode === 'mod-inject' ? 'blur-[3px] opacity-40 pointer-events-none select-none' : ''">
           <div class="flex items-center justify-between text-xs pb-1.5 border-b border-slate-800/80 mb-2">
             <span class="font-bold text-emerald-400 flex items-center gap-1.5">🧭 {{ t('locate.calibration') }}</span>
             <div class="flex items-center gap-2">
@@ -131,6 +138,12 @@
             <button @click="fillPreset(-215, 236, 250)" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">平原之塔</button>
             <button @click="fillPreset(-1071, 248, 1913)" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">复苏神庙</button>
             <button @click="fillPreset(3435, 228, 1968)" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition">哈特诺塔</button>
+          </div>
+          </div>
+          <div v-if="cfg.locateMode === 'mod-inject'"
+            class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 rounded-xl px-4 text-center">
+            <span class="text-sm font-bold text-emerald-300">🧲 {{ t('locateMode.modActive') }}</span>
+            <span class="text-[10px] text-slate-400">{{ t('locateMode.modActiveHint') }}</span>
           </div>
         </section>
       </div>
@@ -213,7 +226,7 @@ import SettingsPop from '../components/SettingsPop.vue'
 import AboutPop from '../components/AboutPop.vue'
 import {
   pos, steps, stepClass, stepDot, isLocating, toggleLocating, progressData,
-  openMap, cfg, saveSettings, ver, syncText, syncClass, syncDot,
+  openMap, cfg, saveSettings, ver, edition, syncText, syncClass, syncDot,
   rt, calibrateCoords, openSave, pickSaveFile, pickSaveDir, detectSave,
   saveTimeAgoText, saveTimeAgoClass
 } from '../composables/useCore'
@@ -237,6 +250,7 @@ function minWin() { rt.WindowMinimise() }
 function closeWin() { rt.Quit() }
 
 const emuShortLabel = computed(() => {
+  if (edition.value === 'pc') return t('emu.pc')
   const e = cfg.emulator || 'auto'
   return { auto: '自动探测', cemu: 'Cemu', ryujinx: 'Ryujinx', eden: 'Eden', savagewind: 'Savage Wind' }[e] || e
 })
@@ -321,6 +335,22 @@ async function doDetectSave() {
 }
 
 async function onEmuChange() {
+  // 模组注入仅 Eden 可用：切到 Cemu/Ryujinx 时自动回落内存探测
+  if (cfg.emulator !== 'auto' && cfg.emulator !== 'eden' && cfg.locateMode === 'mod-inject') {
+    cfg.locateMode = 'auto'
+  }
   await saveSettings()
+}
+
+// 定位方式改动需落盘，否则核心启动时读到的仍是旧值
+async function onLocateModeChange() {
+  await saveSettings()
+  // 定位方式在核心启动时生效：正在定位则重启核心，使新方式立即生效
+  if (isLocating.value) {
+    await api.StopCore()
+    isLocating.value = false
+    await api.StartCore(edition.value === 'pc' ? 'pc' : cfg.emulator)
+    isLocating.value = true
+  }
 }
 </script>

@@ -98,7 +98,6 @@ func statusPath() string {
 
 // statusLoop 每 2s 写一次会话健康快照（原子替换，避免读到半截）。
 func statusLoop() {
-	lastWebWarn := time.Time{} // 网页未连入提示的上次打印时刻
 	for {
 		time.Sleep(2 * time.Second)
 		lock.mu.RLock()
@@ -113,14 +112,15 @@ func statusLoop() {
 		gx, gy, gz := state.gx, state.gy, state.gz
 		mx, my := state.mx, state.my
 		age := state.age
-		stateVerified := state.verified
 		state.mu.RUnlock()
 
-		// v3.2.2 诊断：定位已锁定但网页端始终未连入 → 指路提示（每 90s 一次，连入后永久静默）
-		if ok && stateVerified && lastWebHitUnix.Load() == 0 && time.Since(lastWebWarn) >= 90*time.Second {
-			lastWebWarn = time.Now()
-			fmt.Println("  [server] 网页端尚未连接 —— 打开在线地图 https://botw.yalin.site 即出红点；排查见 TROUBLESHOOTING §A / web page not connected yet — open the online map; see TROUBLESHOOTING §A")
+		// 真实连接断流检测：曾连上过但超过 15s 无 /pos 心跳时记一次事件
+		if ts := lastWebHitUnix.Load(); ts > 0 && time.Now().Unix()-ts > 15 {
+			if webConnState.CompareAndSwap(2, 0) {
+				logInfo("disconnected (timeout 15s)")
+			}
 		}
+		webConnected, webOrigin := webConnectionInfo()
 
 		ageSec := 0.0
 		if age > 0 {
@@ -132,22 +132,24 @@ func statusLoop() {
 			platName = plat.Name()
 		}
 		obj := map[string]any{
-			"time":     time.Now().Format(time.RFC3339),
-			"pid":      procPID,
-			"corePid":  os.Getpid(), // v3.2.1 会话签名：GUI 只认自己拉起的这个进程写的快照
-			"port":     primaryPort, // v3.2.2 端口自愈：GUI 按此端口调核心 HTTP（save-override/rescan）
-			"game":     currentGame.Name(),
-			"map_url":  currentGame.MapURL(), // V2.2.0 Q1：GUI 按识别游戏打开对应地图
-			"emulator": platName,
-			"emuVer":   emulatorExeVersion(),
-			"ok":       ok,
-			"pos":      map[string]any{"gx": gx, "gy": gy, "gz": gz, "mx": mx, "my": my},
-			"source":   src,
-			"verified": verified,
-			"copies":   copies,
-			"lockAddr": fmt.Sprintf("0x%X", addr),
-			"ageSec":   ageSec,
-			"mode":     src, // 原为 locModeString()（随 calibrate/chain 一并移除）；
+			"time":         time.Now().Format(time.RFC3339),
+			"pid":          procPID,
+			"corePid":      os.Getpid(), // v3.2.1 会话签名：GUI 只认自己拉起的这个进程写的快照
+			"port":         primaryPort, // v3.2.2 端口自愈：GUI 按此端口调核心 HTTP（save-override/rescan）
+			"game":         currentGame.Name(),
+			"map_url":      currentGame.MapURL(), // V2.2.0 Q1：GUI 按识别游戏打开对应地图
+			"emulator":     platName,
+			"emuVer":       emulatorExeVersion(),
+			"ok":           ok,
+			"pos":          map[string]any{"gx": gx, "gy": gy, "gz": gz, "mx": mx, "my": my},
+			"source":       src,
+			"verified":     verified,
+			"copies":       copies,
+			"lockAddr":     fmt.Sprintf("0x%X", addr),
+			"ageSec":       ageSec,
+			"webConnected": webConnected,
+			"webOrigin":    webOrigin,
+			"mode":         src, // 原为 locModeString()（随 calibrate/chain 一并移除）；
 			//           source 已含 fixed-offset / probe / scan 等定位模式信息
 			"counters": map[string]any{
 				"locks":     cntLocks.Load(),

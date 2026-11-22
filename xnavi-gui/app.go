@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,12 +19,16 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sys/windows/registry"
 )
+
+// defaultDiagUploadURL 诊断日志直发接口（EdgeOne Pages Node Function）。
+const defaultDiagUploadURL = "https://botw.yalin.site/api/diag"
 
 // guiVersion 导航程序版本（三合一统一版本 v3.0.0，2026-10-07 拍板：
 // GUI 壳与导航核心 xnavi 共享同一版本号，不再各自解耦）。
 // 注意：必须与 xnavi/version.go 的 CoreVersion 保持一致。
-const guiVersion = "v3.3.0"
+const guiVersion = "v3.3.2"
 
 // App Wails 后端：管理核心子进程 + 读 status.json / xnavi-gui-core.log + 网页端端口探测。
 // 与核心的通信完全走文件（status.json、xnavi-gui-core.log），不依赖 8766 HTTP——
@@ -48,9 +53,11 @@ type Config struct {
 	SwSaveDir      string `json:"savagewindSaveDir"` // Savage Wind Recomp 的 BOTW 存档目录（可选）
 	Emulator       string `json:"emulator"`       // auto | cemu | ryujinx | eden | savagewind
 	Game           string `json:"game"`           // auto | botw | totk
-	TLS            bool   `json:"tls"`             // v3.1.0：--tls 双协议，手机镜像页防息屏
+	LocateMode     string `json:"locateMode"`     // auto | mod-inject（仅 Eden 信标）
+	TLS            bool   `json:"tls"`            // v3.1.0：--tls 双协议，手机镜像页防息屏
 	AutoOpenMap    *bool  `json:"autoOpenMap"`    // 定位成功后自动打开在线地图（默认 true）
 	AutoDetectSave *bool  `json:"autoDetectSave"` // 自动检测存档（默认 true）
+	DiagUrl        string `json:"diagUrl,omitempty"`
 }
 
 func (a *App) configPath() string { return filepath.Join(a.workDir, "xnavi-gui-config.json") }
@@ -63,8 +70,12 @@ func (a *App) loadConfig() *Config {
 	}
 	// 为指针类型设默认值（JSON 未写字段时保持 nil，这里补全）
 	defaultTrue := true
-	if cfg.AutoOpenMap == nil    { cfg.AutoOpenMap = &defaultTrue }
-	if cfg.AutoDetectSave == nil { cfg.AutoDetectSave = &defaultTrue }
+	if cfg.AutoOpenMap == nil {
+		cfg.AutoOpenMap = &defaultTrue
+	}
+	if cfg.AutoDetectSave == nil {
+		cfg.AutoDetectSave = &defaultTrue
+	}
 	return cfg
 }
 
@@ -90,6 +101,8 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.cfg = a.loadConfig()
+	// 任务栏图标：显式设置 exe 内图标，避免显示为系统默认图标
+	setWindowIcon()
 	// 清理孤儿 core（2026-10-08 真机事故修复）：GUI 崩溃/被杀后其 core 子进程
 	// 可能残留并独占 8766 端口 → 新 core 全部 HTTP 绑定失败 + 平台反复重新探测
 	// （表现为"换来换去"）。startup 时按进程名清理一次（core 是 GUI 专属子进程，
@@ -128,16 +141,22 @@ func (a *App) checkUpdate() {
 	defer func() { recover() }()
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get("https://api.github.com/repos/yalincc/BOTWmap/tags?per_page=30")
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var tags []struct {
 		Name string `json:"name"`
 	}
-	if json.Unmarshal(body, &tags) != nil { return }
+	if json.Unmarshal(body, &tags) != nil {
+		return
+	}
 	found := false
 	for _, t := range tags {
-		if !strings.HasPrefix(t.Name, "xnavi-") { continue }
+		if !strings.HasPrefix(t.Name, "xnavi-") {
+			continue
+		}
 		latest := strings.TrimPrefix(t.Name, "xnavi-")
 		if isNewerVersion(latest, guiVersion) {
 			runtime.EventsEmit(a.ctx, "update:available", map[string]string{
@@ -157,7 +176,9 @@ func (a *App) checkUpdate() {
 
 func (a *App) PickDir(title string) string {
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: title})
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return dir
 }
 
@@ -310,6 +331,25 @@ func (a *App) eventBridge(ctx context.Context) {
 // Version 返回 GUI 版本号（前端显示用）。
 func (a *App) Version() string { return guiVersion }
 
+// Edition 返回发行形态（"emu" 模拟器版 | "pc" PC-Savage Wind 版）。
+func (a *App) Edition() string { return appEdition }
+
+// appendCoreLog 将 GUI 侧真实事件按 core 同款时间戳格式追加到 xnavi-gui-core.log。
+func (a *App) appendCoreLog(line string) {
+	f, err := os.OpenFile(filepath.Join(a.workDir, "xnavi-gui-core.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	ts := time.Now().Format("2006-01-02 15:04:05.000")
+	fmt.Fprintf(f, "%s   %s\n", ts, strings.TrimSpace(line))
+}
+
+// LogMapOpened 记录 GUI 打开网页地图的真实动作。
+func (a *App) LogMapOpened(url string) {
+	a.appendCoreLog("[gui] opened map: " + url)
+}
+
 // Calibrate 基准校准（S3）：把用户从游戏地图读到的坐标写入 calibrate.json，
 // core 轮询消费（文件通信，遵守双入口原则）。返回提示文案。
 func (a *App) Calibrate(x, y, z float64) string {
@@ -337,7 +377,10 @@ func (a *App) StartCore(emu string) string {
 	if _, err := os.Stat(exe); err != nil {
 		return "找不到核心程序 xnavi-core.exe（应放在本程序同目录）"
 	}
-	args := []string{"--emu=" + emu, "--no-open"}
+	args := []string{"--no-open"}
+	if appEdition != "pc" {
+		args = append([]string{"--emu=" + emu}, args...)
+	}
 	game := ""
 	if a.cfg != nil {
 		game = a.cfg.Game
@@ -345,14 +388,20 @@ func (a *App) StartCore(emu string) string {
 	if game != "" && game != "auto" {
 		args = append(args, "--game="+game)
 	}
-	if a.cfg.CemuSaveDir != "" {
-		args = append(args, "--cemu-save-dir="+a.cfg.CemuSaveDir)
+	// 模组注入模式交给核心按实际平台判定（仅 Eden 支持，其他平台自动回落内存探测）
+	if a.cfg != nil && a.cfg.LocateMode == "mod-inject" {
+		args = append(args, "--locate=mod-inject")
 	}
-	if a.cfg.RyujinxSaveDir != "" {
-		args = append(args, "--ryujinx-save-dir="+a.cfg.RyujinxSaveDir)
-	}
-	if a.cfg.EdenSaveDir != "" {
-		args = append(args, "--eden-save-dir="+a.cfg.EdenSaveDir)
+	if appEdition != "pc" && a.cfg != nil {
+		if a.cfg.CemuSaveDir != "" {
+			args = append(args, "--cemu-save-dir="+a.cfg.CemuSaveDir)
+		}
+		if a.cfg.RyujinxSaveDir != "" {
+			args = append(args, "--ryujinx-save-dir="+a.cfg.RyujinxSaveDir)
+		}
+		if a.cfg.EdenSaveDir != "" {
+			args = append(args, "--eden-save-dir="+a.cfg.EdenSaveDir)
+		}
 	}
 	if a.cfg.SwSaveDir != "" {
 		args = append(args, "--savagewind-save-dir="+a.cfg.SwSaveDir)
@@ -622,7 +671,164 @@ func hostname() string {
 	return h
 }
 
-// ExportDiagnostics 一键导出诊断包（zip）：系统信息 + status.json + core 日志 + 事件日志。
+// collectEnvDiag 检查本机回环 HTTP 与 Windows 系统代理配置（用于排障，不写日志）。
+func (a *App) collectEnvDiag() map[string]any {
+	port := a.coreHTTPPort()
+	res := map[string]any{
+		"port":             port,
+		"loopbackOk":       false,
+		"loopbackErr":      "",
+		"proxyEnabled":     false,
+		"proxyServer":      "",
+		"proxyBypassLocal": true,
+	}
+
+	client := http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/pos?who=gui-diag", port))
+	if err != nil {
+		res["loopbackErr"] = err.Error()
+	} else {
+		resp.Body.Close()
+		res["loopbackOk"] = resp.StatusCode == http.StatusOK
+		if resp.StatusCode != http.StatusOK {
+			res["loopbackErr"] = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+	}
+
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)
+	if err == nil {
+		defer k.Close()
+		en, _, e1 := k.GetIntegerValue("ProxyEnable")
+		srv, _, _ := k.GetStringValue("ProxyServer")
+		ovr, _, _ := k.GetStringValue("ProxyOverride")
+		if e1 == nil && en == 1 {
+			res["proxyEnabled"] = true
+			res["proxyServer"] = srv
+			lower := strings.ToLower(ovr)
+			bypass := strings.Contains(lower, "127.0.0.1") || strings.Contains(lower, "<local>") || strings.Contains(lower, "localhost")
+			res["proxyBypassLocal"] = bypass
+		}
+	}
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("port=%d loopbackOk=%v err=%q", port, res["loopbackOk"], res["loopbackErr"]))
+	lines = append(lines, fmt.Sprintf("proxyEnabled=%v server=%q bypassLocal=%v", res["proxyEnabled"], res["proxyServer"], res["proxyBypassLocal"]))
+	res["summary"] = strings.Join(lines, "\n")
+	return res
+}
+
+// RunEnvDiag 1 次性环境自检：仅在发现异常时写入 [diag] 日志，正常时不刷屏。
+func (a *App) RunEnvDiag() map[string]any {
+	res := a.collectEnvDiag()
+	if ok, _ := res["loopbackOk"].(bool); !ok {
+		errMsg, _ := res["loopbackErr"].(string)
+		a.appendCoreLog(fmt.Sprintf("ERROR [diag] 本机回环请求 http://127.0.0.1:%d/pos 失败 (%s)，请检查防火墙或安全软件是否拦截", res["port"], errMsg))
+	}
+	if pe, _ := res["proxyEnabled"].(bool); pe {
+		if bypass, _ := res["proxyBypassLocal"].(bool); !bypass {
+			a.appendCoreLog(fmt.Sprintf("WARN [diag] 检测到系统代理 (%s) 未绕过 127.0.0.1，浏览器可能无法连接本地服务", res["proxyServer"]))
+		}
+	}
+	return res
+}
+
+func (a *App) buildDiagInfoText() string {
+	emu := "auto"
+	if appEdition == "pc" {
+		emu = "pc-savage-wind"
+	} else if a.cfg != nil && a.cfg.Emulator != "" {
+		emu = a.cfg.Emulator
+	}
+	return fmt.Sprintf(
+		"xnavi diagnostics\n===================\nGUI version: %s (%s)\nOS: %s/%s\nArch: %s\nCPU cores: %d\nHostname: %s\nTime: %s\nEmulator setting: %s\nCemuSaveDir configured: %q\nRyujinxSaveDir configured: %q\nEdenSaveDir configured: %q\n\n",
+		guiVersion, appEdition, stdruntime.GOOS, stdruntime.GOARCH, stdruntime.GOARCH,
+		stdruntime.NumCPU(), hostname(),
+		time.Now().Format("2006-01-02 15:04:05"),
+		emu,
+		func() string {
+			if a.cfg != nil {
+				return a.cfg.CemuSaveDir
+			}
+			return ""
+		}(),
+		func() string {
+			if a.cfg != nil {
+				return a.cfg.RyujinxSaveDir
+			}
+			return ""
+		}(),
+		func() string {
+			if a.cfg != nil {
+				return a.cfg.EdenSaveDir
+			}
+			return ""
+		}(),
+	)
+}
+
+func tailLinesText(path string, maxLines int) string {
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(string(buf), "\r\n", "\n"), "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// UploadDiagnostics 将脱敏诊断摘要直接 POST 到中转接口发往开发者 QQ 邮箱（无需提取码）。
+func (a *App) UploadDiagnostics(note string) string {
+	targetURL := defaultDiagUploadURL
+	if a.cfg != nil && strings.TrimSpace(a.cfg.DiagUrl) != "" {
+		targetURL = strings.TrimSpace(a.cfg.DiagUrl)
+	}
+	if targetURL == "" {
+		return "未配置上传接口，请先使用「导出诊断包」"
+	}
+
+	env := a.collectEnvDiag()
+	diagText, _ := env["summary"].(string)
+	statusBuf, _ := os.ReadFile(filepath.Join(a.workDir, "status.json"))
+
+	emu := "auto"
+	if appEdition == "pc" {
+		emu = "pc"
+	} else if a.cfg != nil && a.cfg.Emulator != "" {
+		emu = a.cfg.Emulator
+	}
+
+	payload := map[string]any{
+		"version":   guiVersion,
+		"edition":   appEdition,
+		"emulator":  emu,
+		"note":      strings.TrimSpace(note),
+		"info":      a.buildDiagInfoText(),
+		"diag":      diagText,
+		"status":    string(statusBuf),
+		"coreLog":   tailLinesText(filepath.Join(a.workDir, "xnavi-gui-core.log"), 200),
+		"eventsLog": tailLinesText(filepath.Join(a.workDir, "run-events.log"), 50),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "打包失败: " + err.Error()
+	}
+
+	client := http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(targetURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "上传失败: " + err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Sprintf("上传失败 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return "已发送给开发者，感谢反馈"
+}
+
+// ExportDiagnostics 一键导出诊断包（zip）：系统信息 + 环境自检 + status.json + core 日志 + 事件日志。
 // 用户在反馈问题前点这个，选保存位置，把 zip 发回来即可。
 func (a *App) ExportDiagnostics() string {
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
@@ -644,22 +850,11 @@ func (a *App) ExportDiagnostics() string {
 	w := zip.NewWriter(zipFile)
 	defer w.Close()
 
-	// 1) 系统信息
-	info := fmt.Sprintf(
-		"xnavi diagnostics\n===================\nGUI version: %s\nOS: %s/%s\nArch: %s\nCPU cores: %d\nHostname: %s\nTime: %s\nEmulator setting: %s\nCemuSaveDir configured: %q\nRyujinxSaveDir configured: %q\nEdenSaveDir configured: %q\n\n",
-		guiVersion, stdruntime.GOOS, stdruntime.GOARCH, stdruntime.GOARCH,
-		stdruntime.NumCPU(), hostname(),
-		time.Now().Format("2006-01-02 15:04:05"),
-		func() string {
-			if a.cfg != nil {
-				return a.cfg.Emulator
-			}
-			return "auto"
-		}(),
-		func() string { if a.cfg != nil { return a.cfg.CemuSaveDir }; return "" }(),
-		func() string { if a.cfg != nil { return a.cfg.RyujinxSaveDir }; return "" }(),
-		func() string { if a.cfg != nil { return a.cfg.EdenSaveDir }; return "" }(),
-	)
+	// 1) 系统信息 + 环境自检
+	info := a.buildDiagInfoText()
+	if env := a.collectEnvDiag(); env["summary"] != nil {
+		info += "=== Env Check ===\n" + env["summary"].(string) + "\n"
+	}
 	if bw, e := w.Create("info.txt"); e == nil {
 		bw.Write([]byte(info))
 	}

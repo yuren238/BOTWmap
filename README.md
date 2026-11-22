@@ -36,7 +36,8 @@
 
 - 四平台自动识别（Cemu / Ryujinx / Eden / **Savage Wind PC 移植版**），无需手选；仅读内存，不注入、不改游戏
 - 存档联动：游戏保存后 ≤2 秒地图进度自动刷新
-- 下载与使用说明见 [Releases](https://github.com/yuren238/BOTWmap/releases)（本仓库适配版 tag 为 `v3.2.2-savagewind.*`；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）
+- Eden 进阶（可选）：安装[信标 mod](https://github.com/ZoruaFox/Xnavi-Beacon) 后可在 GUI 切换「模组注入」定位——游戏内插件直接上报坐标，神庙/传送等场景定位更稳（模组源码、文档与下载均在同一仓库）
+- 下载与使用说明见 [Releases](https://github.com/yuren238/BOTWmap/releases)（本仓库适配版 tag 为 `v3.2.2-savagewind.*`；原版见[上游](https://github.com/yalincc/BOTWmap/releases)——上游自 v3.3.0 起另发布**独立 PC 原生版程序 `xnavi-pc`**（`xnavi-pc-vX.Y.Z` 前缀），与本仓库适配版并存，可按需选用）
 
 ### PC 移植版 Savage Wind Recomp（本仓库主打适配）
 
@@ -55,7 +56,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 
 适配细节、实测数据与已知限制见 [xnavi/ADAPT-SAVAGEWIND.md](xnavi/ADAPT-SAVAGEWIND.md)。
 
-开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.7`）
+开箱即用的 Windows 包：[**最新 Release**](https://github.com/yuren238/BOTWmap/releases/latest)（当前 `v3.2.2-savagewind.8`；如需上游官方独立 PC 版，见上游 Release 的 `xnavi-pc-v3.3.2`）
 （`Xnavi.exe` GUI + `xnavi-core.exe` 定位核心，解压后两个 exe 放同一目录，平台下拉选 **Savage Wind (PC移植版)**）。
 
 ## 核心功能

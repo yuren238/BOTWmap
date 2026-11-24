@@ -88,7 +88,7 @@ REM 存档默认从 <游戏目录>\save\save_0 读取；自定义： --savagewin
 
 ## 版本
 
-网页版 **v1.7.8**；导航程序 xnavi 版本独立（本适配版 Latest：**`v3.3.0-savagewind.8`**，见 [Releases](https://github.com/yuren238/BOTWmap/releases)；原版见[上游](https://github.com/yalincc/BOTWmap/releases)）。更新明细见 [CHANGELOG.md](CHANGELOG.md)。
+网页版 **v1.7.9**；导航程序 xnavi 版本独立（本适配版 Latest：**`v3.3.0-savagewind.8`**，见 [Releases](https://github.com/yuren238/BOTWmap/releases)；原版见[上游](https://github.com/yalincc/BOTWmap/releases)，Latest：`xnavi-v3.3.0`）。更新明细见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 免责声明
 
